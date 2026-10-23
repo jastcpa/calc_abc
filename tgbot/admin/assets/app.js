@@ -58,7 +58,14 @@
     }
     function drawBubble() {
       const u = img.value.trim();
-      bubbleImg.innerHTML = u ? '<img src="' + esc(u) + '" alt="" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'muted pad\',textContent:\'не удалось загрузить картинку\'}))">' : '';
+      bubbleImg.textContent = '';
+      if (u) {
+        const im = document.createElement('img');
+        im.alt = '';
+        im.addEventListener('error', () => { im.replaceWith(Object.assign(document.createElement('div'), { className: 'muted pad', textContent: 'не удалось загрузить картинку' })); });
+        im.src = u;
+        bubbleImg.appendChild(im);
+      }
       bubbleBtns.innerHTML = rows.map((r) => '<div class="brow">' + r.map((b) => '<span class="chip">' + esc(b.text || '…') + (b.type === 'url' ? ' ↗' : '') + '</span>').join('') + '</div>').join('');
     }
     function refresh() { clearTimeout(timer); timer = setTimeout(preview, 250); drawBubble(); }

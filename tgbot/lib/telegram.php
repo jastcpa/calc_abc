@@ -7,10 +7,24 @@ function tg_api_base(): string
     return rtrim((string)setting('api_base', 'https://api.telegram.org'), '/');
 }
 
-/** Вызов метода Bot API. Возвращает декодированный ответ ['ok'=>bool, ...]. */
-function tg(string $method, array $params = [], int $timeout = 20): array
+function bot_get(int $id): ?array
 {
-    $token = (string)setting('bot_token', '');
+    static $cache = [];
+    if (!array_key_exists($id, $cache)) $cache[$id] = row('SELECT * FROM bots WHERE id = ?', [$id]);
+    return $cache[$id];
+}
+
+/**
+ * Вызов метода Bot API от имени бота $botId. Возвращает ['ok'=>bool, ...].
+ * В тестах можно подменить транспорт: $GLOBALS['TG_TRANSPORT'] = fn($botId,$method,$params): array.
+ */
+function tg(int $botId, string $method, array $params = [], int $timeout = 20, ?string $token = null): array
+{
+    if (isset($GLOBALS['TG_TRANSPORT'])) return ($GLOBALS['TG_TRANSPORT'])($botId, $method, $params);
+    if ($token === null) {
+        $bot = bot_get($botId);
+        $token = $bot['token'] ?? '';
+    }
     if ($token === '') return ['ok' => false, 'error_code' => 0, 'description' => 'Не задан токен бота'];
     $url = tg_api_base() . '/bot' . $token . '/' . $method;
     foreach ($params as $k => $v) if (is_array($v)) $params[$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
@@ -18,11 +32,12 @@ function tg(string $method, array $params = [], int $timeout = 20): array
     curl_setopt_array($ch, [
         CURLOPT_POST => true, CURLOPT_POSTFIELDS => $params, CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT => $timeout, CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
     ]);
     $res = curl_exec($ch);
     $err = curl_error($ch);
     curl_close($ch);
-    if ($res === false) return ['ok' => false, 'error_code' => 0, 'description' => 'cURL: ' . $err];
+    if ($res === false) return ['ok' => false, 'error_code' => 0, 'description' => 'cURL: ' . str_replace($token, '***', $err)];
     $j = json_decode($res, true);
     return is_array($j) ? $j : ['ok' => false, 'error_code' => 0, 'description' => 'Некорректный ответ: ' . substr($res, 0, 200)];
 }
@@ -36,7 +51,7 @@ function esc(string $s): string { return htmlspecialchars($s, ENT_NOQUOTES | ENT
  */
 function md_to_html(string $s): string
 {
-    $s = str_replace(["\r\n", "\r"], "\n", $s);
+    $s = str_replace(["\r\n", "\r", "\x01", "\x02"], ["\n", "\n", '', ''], $s);
     $stash = [];
     $put = function (string $html) use (&$stash): string {
         $stash[] = $html;
@@ -102,12 +117,14 @@ function html_to_plain(string $html): string
     return html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 }
 
-function tg_set_webhook(): array
+function tg_set_webhook(int $botId): array
 {
-    return tg('setWebhook', [
-        'url' => base_url() . '/webhook.php',
-        'secret_token' => (string)setting('webhook_secret'),
+    $bot = row('SELECT * FROM bots WHERE id = ?', [$botId]);
+    if (!$bot) return ['ok' => false, 'description' => 'Бот не найден'];
+    return tg($botId, 'setWebhook', [
+        'url' => base_url() . '/webhook.php?b=' . $botId,
+        'secret_token' => $bot['secret'],
         'allowed_updates' => ['message', 'callback_query', 'my_chat_member'],
         'max_connections' => 20,
-    ]);
+    ], 20, $bot['token']);
 }

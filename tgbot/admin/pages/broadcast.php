@@ -8,10 +8,9 @@ $editable = in_array($b['status'], ['draft', 'scheduled'], true);
 if (is_post()) {
     $do = post('do');
     if (in_array($do, ['save', 'test'], true) && $editable) {
-        $btn = json_decode(post('buttons', '[]'), true);
         $data = [
-            'name' => mb_substr(post('name'), 0, 80) ?: 'Рассылка', 'body' => (string)($_POST['body'] ?? ''), 'image' => post('image'),
-            'buttons' => json_encode(is_array($btn) ? $btn : [], JSON_UNESCAPED_UNICODE),
+            'bot_id' => (int)post('bot_id'), 'name' => mb_substr(post('name'), 0, 80) ?: 'Рассылка', 'body' => mb_substr((string)($_POST['body'] ?? ''), 0, 4096), 'image' => clean_image(post('image')),
+            'buttons' => sanitize_buttons(json_decode(post('buttons', '[]'), true)),
             'inc_groups' => json_encode(post_ids('inc')), 'exc_groups' => json_encode(post_ids('exc')),
         ];
         $mode = post('mode', 'draft');
@@ -20,7 +19,7 @@ if (is_post()) {
             $tg = (int)setting('admin_tg_id', '0');
             if (!$tg) flash('Укажите свой Telegram ID в настройках', 'err');
             else {
-                $r = send_to_user(['id' => 0, 'tg_id' => $tg, 'first_name' => 'Админ', 'last_name' => '', 'username' => '', 'source' => ''], $data, 'b' . $bid);
+                $r = send_to_user(['id' => 0, 'bot_id' => (int)($data['bot_id'] ?: val('SELECT MIN(id) FROM bots WHERE active = 1')), 'tg_id' => $tg, 'first_name' => 'Админ', 'last_name' => '', 'username' => '', 'source' => ''], $data, 'b' . $bid);
                 flash(($r['ok'] ?? false) ? 'Тест отправлен вам в Telegram' : 'Ошибка: ' . ($r['description'] ?? '?'), ($r['ok'] ?? false) ? 'ok' : 'err');
             }
         } else {
@@ -54,7 +53,7 @@ if (is_post()) {
         flash('Рассылка удалена'); redirect('?p=broadcasts');
     } elseif ($do === 'copy') {
         $nid = insert('broadcasts', ['name' => $b['name'] . ' (копия)', 'body' => $b['body'], 'image' => $b['image'], 'buttons' => $b['buttons'],
-            'inc_groups' => $b['inc_groups'], 'exc_groups' => $b['exc_groups'], 'created_at' => now()]);
+            'inc_groups' => $b['inc_groups'], 'exc_groups' => $b['exc_groups'], 'bot_id' => $b['bot_id'], 'created_at' => now()]);
         redirect('?p=broadcast&id=' . $nid);
     }
     redirect('?p=broadcast&id=' . $bid);
@@ -87,7 +86,8 @@ $sl = ['draft' => 'черновик', 'scheduled' => 'запланирована
 <form method="post"><?= csrf_field() ?>
 <div class="card"><label>Название (для вас)</label><input name="name" value="<?= h($b['name']) ?>"><div style="margin-top:12px"><?= msg_editor($b) ?></div></div>
 <div class="card"><h2>Кому отправлять</h2>
-<p class="muted">Получатели — активные пользователи (не заблокировавшие бота). Если группы не выбраны — всем.</p>
+<label>Бот</label><select name="bot_id" style="max-width:360px"><?= bot_options((int)$b['bot_id'], 'Все боты (каждому — через его бота)') ?></select>
+<p class="muted">Получатели — активные пользователи выбранного бота (или всех ботов), не заблокировавшие бота. Если группы не выбраны — всем. Группы общие для всех ботов.</p>
 <div class="grid2"><div><b>Только участникам групп (любой из):</b>
 <?php foreach ($groups as $g): ?><label class="chk"><input type="checkbox" name="inc[]" value="<?= $g['id'] ?>" <?= in_array((int)$g['id'], $inc, true) ? 'checked' : '' ?>> <?= group_tag($g) ?> <span class="muted"><?= $g['cnt'] ?></span></label><?php endforeach; if (!$groups) echo '<p class="muted">Нет групп</p>'; ?></div>
 <div><b>Исключить участников групп:</b>

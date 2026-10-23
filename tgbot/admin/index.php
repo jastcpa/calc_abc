@@ -11,11 +11,20 @@ session_start();
 
 $p = $_GET['p'] ?? 'dashboard';
 
-if (isset($_GET['logout'])) { session_destroy(); header('Location: index.php'); exit; }
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: same-origin');
+header("Content-Security-Policy: default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; form-action 'self'");
+header('Cache-Control: no-store');
 
 if (empty($_SESSION['auth'])) {
     $err = '';
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    q('DELETE FROM login_fail WHERE at < ?', [now() - 900]);
+    $locked = (int)val('SELECT COUNT(*) FROM login_fail WHERE ip = ?', [$ip]) >= 5;
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $locked) {
+        $err = 'Слишком много попыток. Повторите через 15 минут.';
+    } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $okLogin = hash_equals((string)setting('admin_login'), (string)($_POST['login'] ?? ''));
         $okPass = password_verify((string)($_POST['password'] ?? ''), (string)setting('admin_hash'));
         if ($okLogin && $okPass) {
@@ -24,7 +33,8 @@ if (empty($_SESSION['auth'])) {
             $_SESSION['csrf'] = rand_token(16);
             header('Location: index.php'); exit;
         }
-        sleep(1);
+        q('INSERT INTO login_fail (ip, at) VALUES (?, ?)', [$ip, now()]);
+        usleep(500000);
         $err = 'Неверный логин или пароль';
     }
     ?><!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход</title>
@@ -40,12 +50,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !hash_equals($csrf, (string)($_POST
     http_response_code(400);
     exit('CSRF token mismatch');
 }
+if (($_GET['p'] ?? '') === 'logout' && $_SERVER['REQUEST_METHOD'] !== 'POST') { header('Location: index.php'); exit; }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_GET['p'] ?? '') === 'logout') {
+    session_destroy();
+    header('Location: index.php');
+    exit;
+}
 
 $pages = [
     'dashboard' => ['Дашборд', '📊'], 'users' => ['Пользователи', '👥'], 'user' => null, 'groups' => ['Группы', '🏷'],
     'flows' => ['Цепочки', '🔗'], 'flow' => null, 'broadcasts' => ['Рассылки', '📣'], 'broadcast' => null,
-    'postbacks' => ['Постбеки', '🔁'], 'links' => ['Ссылки/источники', '🧭'], 'settings' => ['Настройки', '⚙️'],
-    'preview' => null,
+    'bots' => ['Боты', '🤖'], 'postbacks' => ['Постбеки', '🔁'], 'links' => ['Ссылки/источники', '🧭'], 'settings' => ['Настройки', '⚙️'],
+    'preview' => null, 'logout' => null,
 ];
 if (!array_key_exists($p, $pages)) $p = 'dashboard';
 
@@ -67,8 +83,8 @@ $gjson = json_encode(rows('SELECT id, name FROM groups ORDER BY name'), JSON_UNE
 ?><!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf" content="<?= h($csrf) ?>"><meta name="groups" content="<?= h($gjson) ?>">
 <title><?= h($title ?: ($pages[$activeNav][0] ?? 'Админка')) ?> — Бот</title><link rel="stylesheet" href="assets/app.css"></head><body>
-<div class="layout"><nav class="side"><h2>🤖 <?= h(setting('bot_username') ? '@' . setting('bot_username') : 'Бот') ?></h2>
+<div class="layout"><nav class="side"><h2>🤖 Telegram-боты</h2>
 <?php foreach ($pages as $k => $v) if ($v): ?><a href="?p=<?= $k ?>" class="<?= $k === $activeNav ? 'on' : '' ?>"><?= $v[1] ?> <?= h($v[0]) ?></a><?php endif; ?>
-<div class="out"><a href="?logout=1">⎋ Выйти</a></div></nav>
+<form method="post" action="?p=logout" class="out"><?= csrf_field() ?><button class="linkbtn">⎋ Выйти</button></form></nav>
 <main class="main"><?php foreach (flashes() as [$t, $m]): ?><div class="flash <?= $t ?>"><?= h($m) ?></div><?php endforeach; ?>
 <?= $content ?></main></div><script src="assets/app.js"></script></body></html>

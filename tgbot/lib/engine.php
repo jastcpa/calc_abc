@@ -31,13 +31,35 @@ function hooks_enqueue(string $type, ?int $userId, string $ref, string $label, a
     }
 }
 
+/** Защита от SSRF: только http(s) и только публичные адреса (если не включено allow_private_hooks). */
+function url_is_public_http(string $url): bool
+{
+    $p = parse_url($url);
+    if (!$p || !in_array(strtolower($p['scheme'] ?? ''), ['http', 'https'], true) || empty($p['host'])) return false;
+    if (setting('allow_private_hooks', '0') === '1') return true;
+    $host = trim($p['host'], '[]');
+    $ips = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : (gethostbynamel($host) ?: []);
+    if (!$ips) return false;
+    foreach ($ips as $ip) {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return false;
+    }
+    return true;
+}
+
+/** Ссылки кнопок: только http(s) и tg://. */
+function url_is_button_safe(string $url): bool
+{
+    return (bool)preg_match('~^(https?|tg)://[^\s"<>]+$~i', $url);
+}
+
 function hooks_process(int $limit = 20): int
 {
     $n = 0;
     foreach (rows("SELECT * FROM out_queue WHERE status = 'pending' AND next_at <= ? ORDER BY id LIMIT $limit", [now()]) as $j) {
-        if (!preg_match('~^https?://~i', $j['url'])) { q("UPDATE out_queue SET status='failed' WHERE id=?", [$j['id']]); continue; }
+        if (!url_is_public_http($j['url'])) { q("UPDATE out_queue SET status='failed', code=0 WHERE id=?", [$j['id']]); continue; }
         $ch = curl_init($j['url']);
-        $opt = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_FOLLOWLOCATION => true];
+        $opt = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_FOLLOWLOCATION => false, CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS];
         if ($j['method'] === 'POST') {
             $opt += [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $j['body'], CURLOPT_HTTPHEADER => ['Content-Type: application/json']];
         }
@@ -59,23 +81,24 @@ function hooks_process(int $limit = 20): int
 
 // ======================= пользователи и группы =======================
 
-function user_touch(array $from, ?string $param = null): array
+function user_touch(array $from, ?string $param = null, int $botId = 0): array
 {
     $tgId = (int)$from['id'];
-    $u = row('SELECT * FROM users WHERE tg_id = ?', [$tgId]);
+    $u = row('SELECT * FROM users WHERE bot_id = ? AND tg_id = ?', [$botId, $tgId]);
     $fields = [
         'username' => $from['username'] ?? null, 'first_name' => $from['first_name'] ?? null,
         'last_name' => $from['last_name'] ?? null, 'lang' => $from['language_code'] ?? null,
     ];
     $source = null; $label = null;
     if ($param !== null && $param !== '') {
+        $param = preg_replace('/[^A-Za-z0-9_-]/', '', mb_substr($param, 0, 64));
         [$source, $label] = array_pad(explode('__', $param, 2), 2, null);
-        $source = mb_substr(trim((string)$source), 0, 64) ?: null;
-        $label = $label !== null ? mb_substr(trim($label), 0, 128) : null;
+        $source = ($source !== null && $source !== '') ? $source : null;
+        $label = ($label !== null && $label !== '') ? $label : null;
     }
     if (!$u) {
         $id = insert('users', $fields + [
-            'tg_id' => $tgId, 'source' => $source, 'label' => $label, 'start_param' => $param,
+            'bot_id' => $botId, 'tg_id' => $tgId, 'source' => $source, 'label' => $label, 'start_param' => $param,
             'status' => 'active', 'created_at' => now(), 'last_seen' => now(),
         ]);
         $u = row('SELECT * FROM users WHERE id = ?', [$id]);
@@ -149,6 +172,37 @@ function msg_label(string $key): string
     return $key;
 }
 
+/** Нормализация кнопок из формы: структура, длины, только безопасные ссылки. Возвращает JSON. */
+function sanitize_buttons($raw): string
+{
+    $out = [];
+    foreach (is_array($raw) ? array_slice($raw, 0, 8) : [] as $rowBtns) {
+        $row = [];
+        foreach (is_array($rowBtns) ? array_slice($rowBtns, 0, 8) : [] as $b) {
+            if (!is_array($b)) continue;
+            $text = mb_substr(trim((string)($b['text'] ?? '')), 0, 64);
+            if ($text === '') continue;
+            $btn = ['text' => $text, 'group' => max(0, (int)($b['group'] ?? 0))];
+            if (($b['type'] ?? 'url') === 'cb') {
+                $btn += ['type' => 'cb', 'reply' => mb_substr((string)($b['reply'] ?? ''), 0, 4000)];
+            } else {
+                $url = trim((string)($b['url'] ?? ''));
+                if (!url_is_button_safe($url)) continue;
+                $btn += ['type' => 'url', 'url' => mb_substr($url, 0, 1000), 'track' => ($b['track'] ?? true) !== false];
+            }
+            $row[] = $btn;
+        }
+        if ($row) $out[] = $row;
+    }
+    return json_encode($out, JSON_UNESCAPED_UNICODE);
+}
+
+function clean_image(string $url): string
+{
+    $url = trim($url);
+    return preg_match('~^https?://[^\s"<>]+$~i', $url) ? mb_substr($url, 0, 1000) : '';
+}
+
 function flat_buttons(array $m): array
 {
     $flat = [];
@@ -158,9 +212,9 @@ function flat_buttons(array $m): array
     return $flat;
 }
 
-function link_sig(string $key, int $idx, int $tgId): string
+function link_sig(string $key, int $idx, int $userId): string
 {
-    return substr(hash_hmac('sha256', "$key|$idx|$tgId", (string)setting('secret')), 0, 12);
+    return substr(hash_hmac('sha256', "$key|$idx|$userId", (string)setting('secret')), 0, 12);
 }
 
 function build_markup(array $m, string $key, array $u): ?array
@@ -174,9 +228,9 @@ function build_markup(array $m, string $key, array $u): ?array
             if ($text === '') { $i++; continue; }
             if (($b['type'] ?? 'url') === 'url') {
                 $url = trim((string)($b['url'] ?? ''));
-                if ($url === '') { $i++; continue; }
-                if ($track && ($b['track'] ?? true) && $key !== '') {
-                    $url = base_url() . '/go.php?m=' . $key . '&i=' . $i . '&u=' . $u['tg_id'] . '&s=' . link_sig($key, $i, (int)$u['tg_id']);
+                if (!url_is_button_safe($url)) { $i++; continue; }
+                if ($track && ($b['track'] ?? true) && $key !== '' && str_starts_with($url, 'http')) {
+                    $url = base_url() . '/go.php?m=' . $key . '&i=' . $i . '&u=' . (int)$u['id'] . '&s=' . link_sig($key, $i, (int)$u['id']);
                 }
                 $out[] = ['text' => $text, 'url' => $url];
             } else {
@@ -201,26 +255,27 @@ function send_to_user(array $u, array $m, string $key): array
     if ($img !== '') { $method = 'sendPhoto'; $p['photo'] = $img; if ($html !== '') $p['caption'] = $html; }
     else { $method = 'sendMessage'; $p['text'] = $html; }
 
-    $r = tg($method, $p);
+    $bot = (int)($u['bot_id'] ?? 0);
+    $r = tg($bot, $method, $p);
     if (!($r['ok'] ?? false) && stripos((string)($r['description'] ?? ''), 'parse entities') !== false) {
         unset($p['parse_mode']);
         $plain = html_to_plain($html);
         if ($method === 'sendPhoto') $p['caption'] = $plain; else $p['text'] = $plain;
-        $r = tg($method, $p);
+        $r = tg($bot, $method, $p);
     }
     if (!($r['ok'] ?? false) && ($r['error_code'] ?? 0) == 403) user_blocked((int)$u['id']);
     return $r;
 }
 
 /** Ответ на нажатие кнопки (callback_query). */
-function handle_callback(array $cq): void
+function handle_callback(array $cq, int $botId = 0): void
 {
     $data = (string)($cq['data'] ?? '');
     $from = $cq['from'] ?? [];
-    $ack = fn(string $text = '') => tg('answerCallbackQuery', ['callback_query_id' => $cq['id']] + ($text !== '' ? ['text' => $text] : []));
+    $ack = fn(string $text = '') => tg($botId, 'answerCallbackQuery', ['callback_query_id' => $cq['id']] + ($text !== '' ? ['text' => $text] : []));
     if (!preg_match('/^c\|([sb]\d+)\|(\d+)$/', $data, $mm)) { $ack(); return; }
     [, $key, $idx] = $mm;
-    $u = user_touch($from);
+    $u = user_touch($from, null, $botId);
     $m = msg_by_key($key);
     $btn = $m ? (flat_buttons($m)[(int)$idx] ?? null) : null;
     if (!$btn) { $ack(); return; }
@@ -233,18 +288,19 @@ function handle_callback(array $cq): void
 
 // ======================= цепочки =======================
 
-function flow_pick(?string $source): ?array
+/** Цепочка бота имеет приоритет над общей (bot_id = 0); сначала совпадение по источнику, затем «по умолчанию». */
+function flow_pick(?string $source, int $botId = 0): ?array
 {
     if ($source) {
-        $f = row("SELECT * FROM flows WHERE active = 1 AND source <> '' AND lower(source) = lower(?) ORDER BY id LIMIT 1", [$source]);
+        $f = row("SELECT * FROM flows WHERE active = 1 AND source <> '' AND lower(source) = lower(?) AND bot_id IN (0, ?) ORDER BY bot_id DESC, id LIMIT 1", [$source, $botId]);
         if ($f) return $f;
     }
-    return row('SELECT * FROM flows WHERE active = 1 AND is_default = 1 ORDER BY id LIMIT 1');
+    return row("SELECT * FROM flows WHERE active = 1 AND is_default = 1 AND bot_id IN (0, ?) ORDER BY bot_id DESC, id LIMIT 1", [$botId]);
 }
 
 function flow_enroll(array $u, bool $restart = false): void
 {
-    $flow = flow_pick($u['source']);
+    $flow = flow_pick($u['source'], (int)$u['bot_id']);
     if (!$flow) return;
     $existing = row('SELECT id FROM user_flows WHERE user_id = ? AND flow_id = ?', [$u['id'], $flow['id']]);
     if ($existing) {
@@ -307,7 +363,8 @@ function flow_tick(int $deadline, ?int $onlyUser = null): int
 
 function bc_recipient_sql(array $b): array
 {
-    $w = ["u.status = 'active'"]; $p = [];
+    $w = ["u.status = 'active'", 'u.bot_id IN (SELECT id FROM bots WHERE active = 1)']; $p = [];
+    if ((int)($b['bot_id'] ?? 0) > 0) { $w[] = 'u.bot_id = ?'; $p[] = (int)$b['bot_id']; }
     $inc = array_values(array_filter(array_map('intval', json_arr($b['inc_groups']))));
     $exc = array_values(array_filter(array_map('intval', json_arr($b['exc_groups']))));
     if ($inc) $w[] = 'EXISTS (SELECT 1 FROM user_groups g WHERE g.user_id = u.id AND g.group_id IN (' . implode(',', $inc) . '))';
@@ -327,6 +384,8 @@ function bc_start(int $id): void
     if (!$b || !in_array($b['status'], ['draft', 'scheduled'], true)) return;
     [$w, $p] = bc_recipient_sql($b);
     db()->beginTransaction();
+    // захват: параллельный запуск не создаст очередь дважды
+    if (q("UPDATE broadcasts SET status='sending' WHERE id = ? AND status IN ('draft','scheduled')", [$id])->rowCount() === 0) { db()->rollBack(); return; }
     q("INSERT INTO bq (broadcast_id, user_id) SELECT $id, u.id FROM users u WHERE $w", $p);
     $total = (int)val('SELECT COUNT(*) FROM bq WHERE broadcast_id = ?', [$id]);
     q("UPDATE broadcasts SET status='sending', total=?, started_at=? WHERE id=?", [$total, now(), $id]);
@@ -375,7 +434,7 @@ function bc_tick(int $deadline): int
 
 function run_tick(int $seconds = 25): array
 {
-    $fh = fopen(APP_ROOT . '/data/tick.lock', 'c');
+    $fh = fopen(data_dir() . '/tick.lock', 'c');
     if (!$fh || !flock($fh, LOCK_EX | LOCK_NB)) return ['locked' => true];
     set_setting('last_tick', (string)now());
     $deadline = time() + $seconds;
@@ -403,4 +462,38 @@ function postback_apply(string $event, array $u, array $data = []): array
         $applied[] = ($r['action'] === 'remove' ? '-' : '+') . $r['group_id'];
     }
     return $applied;
+}
+
+// ======================= обработка апдейтов Telegram =======================
+
+function handle_update(array $update, int $botId): void
+{
+    if (isset($update['callback_query'])) {
+        handle_callback($update['callback_query'], $botId);
+    } elseif (isset($update['my_chat_member'])) {
+        $m = $update['my_chat_member'];
+        if (($m['chat']['type'] ?? '') === 'private') {
+            $u = row('SELECT id FROM users WHERE bot_id = ? AND tg_id = ?', [$botId, (int)$m['chat']['id']]);
+            $st = $m['new_chat_member']['status'] ?? '';
+            if ($u && $st === 'kicked') user_blocked((int)$u['id']);
+            elseif ($u && $st === 'member') {
+                q("UPDATE users SET status='active', blocked_at=NULL WHERE id=?", [$u['id']]);
+                ev((int)$u['id'], 'unblocked');
+            }
+        }
+    } elseif (isset($update['message']) && ($update['message']['chat']['type'] ?? '') === 'private' && isset($update['message']['from'])) {
+        $msg = $update['message'];
+        $text = trim((string)($msg['text'] ?? ''));
+        if (preg_match('~^/start(?:@\w+)?(?:\s+(\S+))?$~u', $text, $mm)) {
+            $u = user_touch($msg['from'], $mm[1] ?? null, $botId);
+            ev((int)$u['id'], 'start', (string)($mm[1] ?? ''), (string)($u['source'] ?? ''));
+            flow_enroll($u, !$u['_new'] && setting('restart_on_start', '0') === '1');
+            flow_tick(time() + 20, (int)$u['id']);
+        } else {
+            $u = user_touch($msg['from'], null, $botId);
+            ev((int)$u['id'], 'message', '', mb_substr($text, 0, 100));
+            $reply = trim((string)setting('default_reply', ''));
+            if ($reply !== '') send_to_user($u, ['body' => $reply, 'image' => '', 'buttons' => '[]'], '');
+        }
+    }
 }

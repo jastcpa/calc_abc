@@ -2,7 +2,7 @@
 $title = 'Пользователи';
 $f = [
     'q' => trim((string)($_GET['q'] ?? '')), 'group' => (int)($_GET['group'] ?? 0), 'nogroup' => (int)($_GET['nogroup'] ?? 0),
-    'source' => trim((string)($_GET['source'] ?? '')), 'status' => (string)($_GET['status'] ?? ''),
+    'bot' => (int)($_GET['bot'] ?? 0), 'source' => trim((string)($_GET['source'] ?? '')), 'status' => (string)($_GET['status'] ?? ''),
 ];
 $w = ['1=1']; $qp = [];
 if ($f['q'] !== '') {
@@ -10,6 +10,7 @@ if ($f['q'] !== '') {
     $like = '%' . $f['q'] . '%';
     array_push($qp, $like, $like, $like, $f['q'], $f['q']);
 }
+if ($f['bot']) { $w[] = 'u.bot_id = ?'; $qp[] = $f['bot']; }
 if ($f['group']) { $w[] = 'EXISTS (SELECT 1 FROM user_groups g WHERE g.user_id = u.id AND g.group_id = ?)'; $qp[] = $f['group']; }
 if ($f['nogroup']) { $w[] = 'NOT EXISTS (SELECT 1 FROM user_groups g WHERE g.user_id = u.id AND g.group_id = ?)'; $qp[] = $f['nogroup']; }
 if ($f['source'] === '-') $w[] = "(u.source IS NULL OR u.source = '')";
@@ -37,9 +38,10 @@ if (isset($_GET['export'])) {
     header('Content-Disposition: attachment; filename="users.csv"');
     $o = fopen('php://output', 'w');
     fwrite($o, "\xEF\xBB\xBF");
-    fputcsv($o, ['id', 'tg_id', 'username', 'first_name', 'last_name', 'source', 'label', 'status', 'created', 'groups']);
+    fputcsv($o, ['id', 'bot', 'tg_id', 'username', 'first_name', 'last_name', 'source', 'label', 'status', 'created', 'groups']);
+    $safe = fn($v) => is_string($v) && $v !== '' && strpos('=+-@' . "\t\r", $v[0]) !== false ? "'" . $v : $v; // защита от CSV/формул-инъекции
     foreach (rows("SELECT u.*, (SELECT group_concat(g.name, '; ') FROM user_groups ug JOIN groups g ON g.id = ug.group_id WHERE ug.user_id = u.id) AS gl FROM users u WHERE $where ORDER BY u.id", $qp) as $u)
-        fputcsv($o, [$u['id'], $u['tg_id'], $u['username'], $u['first_name'], $u['last_name'], $u['source'], $u['label'], $u['status'], fmt_dt((int)$u['created_at']), $u['gl']]);
+        fputcsv($o, array_map($safe, [$u['id'], bot_label((int)$u['bot_id']), $u['tg_id'], $u['username'], $u['first_name'], $u['last_name'], $u['source'], $u['label'], $u['status'], fmt_dt((int)$u['created_at']), $u['gl']]));
     exit;
 }
 
@@ -57,6 +59,7 @@ $qs = array_filter($f);
 <h1>Пользователи <span class="muted">(<?= $total ?>)</span></h1>
 <div class="card"><form method="get" class="row"><input type="hidden" name="p" value="users">
 <input name="q" value="<?= h($f['q']) ?>" placeholder="Поиск: имя, @username, ID, метка" style="min-width:230px">
+<select name="bot"><?= bot_options($f['bot'], 'Любой бот') ?></select>
 <select name="group"><?= group_options($f['group'], 'Любая группа (в группе)') ?></select>
 <select name="nogroup"><?= group_options($f['nogroup'], 'Не состоит в группе') ?></select>
 <select name="source"><option value="">Любой источник</option><option value="-" <?= $f['source'] === '-' ? 'selected' : '' ?>>— без источника —</option>
@@ -70,14 +73,15 @@ $qs = array_filter($f);
 <select name="group_id"><?= group_options(0, '— группа —') ?></select>
 <button class="btn sm" name="action" value="add">Добавить в группу</button><button class="btn sm sec" name="action" value="remove">Убрать из группы</button>
 <label class="chk" style="margin:0"><input type="checkbox" name="all_filtered"> ко всем <?= $total ?> найденным по фильтру</label></div>
-<div style="overflow-x:auto"><table><tr><th><input type="checkbox" id="checkall" style="width:auto"></th><th>Пользователь</th><th>Источник</th><th>Метка</th><th>Группы</th><th>Статус</th><th>Пришёл</th></tr>
+<div style="overflow-x:auto"><table><tr><th><input type="checkbox" id="checkall" style="width:auto"></th><th>Пользователь</th><th>Бот</th><th>Источник</th><th>Метка</th><th>Группы</th><th>Статус</th><th>Пришёл</th></tr>
 <?php foreach ($list as $u): ?><tr>
 <td><input type="checkbox" name="ids[]" value="<?= $u['id'] ?>" style="width:auto"></td>
 <td><a href="?p=user&id=<?= $u['id'] ?>"><?= h(user_name($u)) ?></a><br><span class="muted"><?= $u['username'] ? '@' . h($u['username']) . ' · ' : '' ?><?= $u['tg_id'] ?></span></td>
+<td><?= h(bot_label((int)$u['bot_id'])) ?></td>
 <td><?= $u['source'] ? '<a href="?p=users&source=' . urlencode($u['source']) . '">' . h($u['source']) . '</a>' : '<span class="muted">—</span>' ?></td>
 <td class="mono"><?= h($u['label']) ?></td>
 <td><?php foreach ($ugroups[$u['id']] ?? [] as $g) echo group_tag($g); ?></td>
 <td><?= $u['status'] === 'blocked' ? '<span class="badge r">заблокировал</span>' : '<span class="badge g">активен</span>' ?></td>
 <td><?= fmt_dt((int)$u['created_at']) ?></td></tr>
-<?php endforeach; if (!$list): ?><tr><td colspan="7" class="muted">Никого не найдено</td></tr><?php endif; ?></table></div>
+<?php endforeach; if (!$list): ?><tr><td colspan="8" class="muted">Никого не найдено</td></tr><?php endif; ?></table></div>
 <?= pager($total, $page, $per, $qs + ['p' => 'users']) ?></form>

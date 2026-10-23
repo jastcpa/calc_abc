@@ -46,25 +46,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $reqOk) {
             set_setting('admin_login', $login);
             set_setting('admin_hash', password_hash($pass, PASSWORD_DEFAULT));
             set_setting('secret', rand_token(24));
-            set_setting('webhook_secret', rand_token(24));
-            set_setting('postback_key', rand_token(16));
+                        set_setting('postback_key', rand_token(16));
             set_setting('cron_key', rand_token(16));
             set_setting('tz', $tzs);
             set_setting('base_url', base_url());
             $done = ['webhook' => null, 'me' => null];
             if ($token !== '') {
-                set_setting('bot_token', $token);
-                $me = tg('getMe');
+                $me = tg(0, 'getMe', [], 20, $token);
                 if ($me['ok'] ?? false) {
-                    set_setting('bot_username', (string)$me['result']['username']);
+                    $bid = insert('bots', ['name' => (string)$me['result']['first_name'], 'token' => $token, 'username' => (string)$me['result']['username'],
+                        'secret' => rand_token(24), 'active' => 1, 'created_at' => now()]);
                     $done['me'] = $me['result']['username'];
-                    $done['webhook'] = tg_set_webhook();
+                    $done['webhook'] = tg_set_webhook($bid);
                 } else {
                     $done['me_error'] = $me['description'] ?? 'ошибка';
                 }
             }
             // flow по умолчанию
-            $fid = insert('flows', ['name' => 'Приветственная цепочка', 'source' => '', 'is_default' => 1, 'active' => 1, 'group_id' => 0, 'created_at' => now()]);
+            $fid = insert('flows', ['name' => 'Приветственная цепочка', 'source' => '', 'bot_id' => 0, 'is_default' => 1, 'active' => 1, 'group_id' => 0, 'created_at' => now()]);
             insert('steps', ['flow_id' => $fid, 'position' => 0, 'delay' => 0, 'body' => "Привет, **{first_name}**! 👋\nЭто первое сообщение цепочки. Измените его в админке.", 'buttons' => json_encode([[['text' => 'Нажми меня', 'type' => 'cb', 'reply' => 'Спасибо за клик! ✅']]], JSON_UNESCAPED_UNICODE)]);
             insert('steps', ['flow_id' => $fid, 'position' => 1, 'delay' => 3600, 'body' => 'Прошёл час — это второе сообщение цепочки.']);
         }
@@ -87,8 +86,8 @@ small{color:#666} code{background:#eee;padding:1px 5px;border-radius:4px}
   <p class="ok"><b>Установка завершена.</b></p>
   <?php if ($done['me']): ?><p>Бот <b>@<?= h($done['me']) ?></b> подключён.
     Webhook: <?= ($done['webhook']['ok'] ?? false) ? '<span class="ok">установлен</span>' : '<span class="bad">ошибка — ' . h($done['webhook']['description'] ?? '') . ' (нужен HTTPS)</span>' ?></p>
-  <?php elseif (isset($done['me_error'])): ?><p class="bad">Токен не принят Telegram: <?= h($done['me_error']) ?>. Укажите его в Админка → Настройки.</p>
-  <?php else: ?><p>Токен бота не указан — добавьте его в Админка → Настройки.</p><?php endif; ?>
+  <?php elseif (isset($done['me_error'])): ?><p class="bad">Токен не принят Telegram: <?= h($done['me_error']) ?>. Добавьте бота в Админка → Боты.</p>
+  <?php else: ?><p>Токен бота не указан — добавьте бота в Админка → Боты (можно подключить любое количество).</p><?php endif; ?>
   <p><b>Теперь:</b></p>
   <ol><li>Удалите файл <code>install.php</code> с сервера.</li>
   <li>Откройте <a href="admin/">админку</a> и войдите.</li>
@@ -101,7 +100,7 @@ small{color:#666} code{background:#eee;padding:1px 5px;border-radius:4px}
   <form method="post">
     <label>Логин администратора</label><input name="login" value="<?= h($_POST['login'] ?? 'admin') ?>" required>
     <label>Пароль (от 8 символов)</label><input name="password" type="password" required>
-    <label>Токен бота от @BotFather</label><input name="token" value="<?= h($_POST['token'] ?? '') ?>" placeholder="123456:ABC..."><small>Можно оставить пустым и указать позже в настройках.</small>
+    <label>Токен первого бота от @BotFather</label><input name="token" value="<?= h($_POST['token'] ?? '') ?>" placeholder="123456:ABC..."><small>Можно оставить пустым — ботов добавляют в админке (раздел «Боты»), их может быть сколько угодно.</small>
     <label>Часовой пояс</label><input name="tz" value="<?= h($_POST['tz'] ?? 'Europe/Moscow') ?>"><small>Например Europe/Moscow, Europe/Kyiv, Asia/Almaty</small>
     <button>Установить</button>
   </form>

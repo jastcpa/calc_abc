@@ -19,6 +19,27 @@ function group_options(int $sel = 0, string $empty = '— нет —'): string
     return $o;
 }
 
+function bot_options(int $sel = 0, string $all = 'Все боты'): string
+{
+    $o = $all !== '' ? '<option value="0">' . h($all) . '</option>' : '';
+    foreach (rows('SELECT id, name, username, active FROM bots ORDER BY id') as $b) {
+        $o .= '<option value="' . $b['id'] . '"' . ($b['id'] == $sel ? ' selected' : '') . '>' . h($b['name'] . ($b['username'] ? ' (@' . $b['username'] . ')' : '')) . ($b['active'] ? '' : ' [выкл]') . '</option>';
+    }
+    return $o;
+}
+
+function bot_names(): array
+{
+    static $m = null;
+    return $m ??= array_column(rows('SELECT id, name, username FROM bots'), null, 'id');
+}
+
+function bot_label(int $id): string
+{
+    $b = bot_names()[$id] ?? null;
+    return $b ? ($b['username'] ? '@' . $b['username'] : $b['name']) : 'все боты';
+}
+
 function group_tag(array $g): string
 {
     return '<span class="tag" style="background:' . h($g['color'] ?: '#3b82f6') . '">' . h($g['name']) . '</span>';

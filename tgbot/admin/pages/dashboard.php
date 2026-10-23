@@ -1,6 +1,10 @@
 <?php
 $title = 'Дашборд';
-$days = in_array((int)($_GET['days'] ?? 30), [7, 14, 30, 90], true) ? (int)$_GET['days'] : 30;
+$bot = (int)($_GET['bot'] ?? 0);
+$ub = $bot ? ' AND bot_id = ' . $bot : '';            // фильтр по боту для таблицы users
+$eb = $bot ? ' AND user_id IN (SELECT id FROM users WHERE bot_id = ' . $bot . ')' : ''; // для events
+$days = (int)($_GET['days'] ?? 30);
+if (!in_array($days, [7, 14, 30, 90], true)) $days = 30;
 $off = tz()->getOffset(new DateTime());
 $since = strtotime('today', now() + $off) - $off - ($days - 1) * 86400; // начало периода по tz админки
 $todayStart = $since + ($days - 1) * 86400;
@@ -16,36 +20,36 @@ function series(string $sql, array $p, int $since, int $days, int $off): array
     return $out;
 }
 $dayExpr = "strftime('%Y-%m-%d', created_at + $off, 'unixepoch')";
-$newSeries = series("SELECT $dayExpr d, COUNT(*) c FROM users WHERE created_at >= ? GROUP BY d", [$since], $since, $days, $off);
-$clickSeries = series("SELECT $dayExpr d, COUNT(*) c FROM events WHERE type='click' AND created_at >= ? GROUP BY d", [$since], $since, $days, $off);
+$newSeries = series("SELECT $dayExpr d, COUNT(*) c FROM users WHERE created_at >= ?$ub GROUP BY d", [$since], $since, $days, $off);
+$clickSeries = series("SELECT $dayExpr d, COUNT(*) c FROM events WHERE type='click' AND created_at >= ?$eb GROUP BY d", [$since], $since, $days, $off);
 
-$total = (int)val('SELECT COUNT(*) FROM users');
-$blocked = (int)val("SELECT COUNT(*) FROM users WHERE status='blocked'");
+$total = (int)val('SELECT COUNT(*) FROM users WHERE 1=1' . $ub);
+$blocked = (int)val("SELECT COUNT(*) FROM users WHERE status='blocked'$ub");
 $kpi = [
-    ['Всего пользователей', $total], ['Новых сегодня', (int)val('SELECT COUNT(*) FROM users WHERE created_at >= ?', [$todayStart])],
+    ['Всего пользователей', $total], ['Новых сегодня', (int)val('SELECT COUNT(*) FROM users WHERE created_at >= ?' . $ub, [$todayStart])],
     ["Новых за $days дн.", array_sum($newSeries)], ['Активны (не блок.)', $total - $blocked],
-    ['Заблокировали бота', $blocked], ["Активность за $days дн.", (int)val('SELECT COUNT(*) FROM users WHERE last_seen >= ?', [$since])],
-    ['Кликов по кнопкам', (int)val("SELECT COUNT(*) FROM events WHERE type='click' AND created_at >= ?", [$since])],
-    ['Кликнули (уник.)', (int)val("SELECT COUNT(DISTINCT user_id) FROM events WHERE type='click' AND created_at >= ?", [$since])],
-    ['Сообщений доставлено', (int)val("SELECT COUNT(*) FROM events WHERE type IN ('step_sent','bc_sent') AND created_at >= ?", [$since])],
-    ['Внешних событий', (int)val("SELECT COUNT(*) FROM events WHERE type='postback' AND created_at >= ?", [$since])],
+    ['Заблокировали бота', $blocked], ["Активность за $days дн.", (int)val('SELECT COUNT(*) FROM users WHERE last_seen >= ?' . $ub, [$since])],
+    ['Кликов по кнопкам', (int)val("SELECT COUNT(*) FROM events WHERE type='click' AND created_at >= ?$eb", [$since])],
+    ['Кликнули (уник.)', (int)val("SELECT COUNT(DISTINCT user_id) FROM events WHERE type='click' AND created_at >= ?$eb", [$since])],
+    ['Сообщений доставлено', (int)val("SELECT COUNT(*) FROM events WHERE type IN ('step_sent','bc_sent') AND created_at >= ?$eb", [$since])],
+    ['Внешних событий', (int)val("SELECT COUNT(*) FROM events WHERE type='postback' AND created_at >= ?$eb", [$since])],
 ];
 
 $sources = rows("SELECT COALESCE(NULLIF(u.source,''),'(без источника)') s, COUNT(*) users, SUM(u.status='blocked') blocked,
   SUM(EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.type='click')) clicked,
   SUM(EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.type='postback')) converted,
   SUM(EXISTS (SELECT 1 FROM user_groups g WHERE g.user_id = u.id)) grouped
-  FROM users u WHERE u.created_at >= ? GROUP BY 1 ORDER BY users DESC LIMIT 30", [$since]);
-$grp = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id) cnt FROM groups g ORDER BY cnt DESC');
+  FROM users u WHERE u.created_at >= ?" . ($bot ? ' AND u.bot_id = ' . $bot : '') . " GROUP BY 1 ORDER BY users DESC LIMIT 30", [$since]);
+$grp = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug' . ($bot ? ' JOIN users uu ON uu.id = ug.user_id AND uu.bot_id = ' . $bot : '') . ' WHERE ug.group_id = g.id) cnt FROM groups g ORDER BY cnt DESC');
 $gmax = max(1, ...array_column($grp ?: [['cnt' => 1]], 'cnt'));
 
-$sentBy = array_column(rows("SELECT ref, COUNT(DISTINCT user_id) c FROM events WHERE type IN ('step_sent','bc_sent') GROUP BY ref"), 'c', 'ref');
-$buttons = rows("SELECT ref, label, COUNT(*) c, COUNT(DISTINCT user_id) u FROM events WHERE type='click' AND created_at >= ? GROUP BY ref, label ORDER BY c DESC LIMIT 30", [$since]);
+$sentBy = array_column(rows("SELECT ref, COUNT(DISTINCT user_id) c FROM events WHERE type IN ('step_sent','bc_sent')$eb GROUP BY ref"), 'c', 'ref');
+$buttons = rows("SELECT ref, label, COUNT(*) c, COUNT(DISTINCT user_id) u FROM events WHERE type='click' AND created_at >= ?$eb GROUP BY ref, label ORDER BY c DESC LIMIT 30", [$since]);
 
-$flows = rows('SELECT * FROM flows ORDER BY id');
+$flows = rows('SELECT * FROM flows' . ($bot ? ' WHERE bot_id IN (0, ' . $bot . ')' : '') . ' ORDER BY id');
 $funnel = [];
 foreach ($flows as $f) {
-    $entered = (int)val('SELECT COUNT(*) FROM user_flows WHERE flow_id = ?', [$f['id']]);
+    $entered = (int)val('SELECT COUNT(*) FROM user_flows WHERE flow_id = ?' . ($bot ? ' AND user_id IN (SELECT id FROM users WHERE bot_id = ' . $bot . ')' : ''), [$f['id']]);
     $steps = rows('SELECT id, position, delay FROM steps WHERE flow_id = ? ORDER BY position', [$f['id']]);
     foreach ($steps as &$s) {
         $s['sent'] = (int)($sentBy['s' . $s['id']] ?? 0);
@@ -53,20 +57,28 @@ foreach ($flows as $f) {
     }
     $funnel[] = [$f, $entered, $steps];
 }
-$bcs = rows('SELECT * FROM broadcasts WHERE status IN (\'sending\',\'done\',\'cancelled\') ORDER BY id DESC LIMIT 8');
-$feed = rows('SELECT e.*, u.first_name, u.last_name, u.username, u.tg_id, u.id uid FROM events e LEFT JOIN users u ON u.id = e.user_id ORDER BY e.id DESC LIMIT 20');
+$bcs = rows('SELECT * FROM broadcasts WHERE status IN (\'sending\',\'done\',\'cancelled\')' . ($bot ? ' AND bot_id IN (0, ' . $bot . ')' : '') . ' ORDER BY id DESC LIMIT 8');
+$feed = rows('SELECT e.*, u.first_name, u.last_name, u.username, u.tg_id, u.id uid FROM events e LEFT JOIN users u ON u.id = e.user_id' . ($bot ? ' WHERE u.bot_id = ' . $bot : '') . ' ORDER BY e.id DESC LIMIT 20');
 $evNames = ['start' => '▶ /start', 'step_sent' => '✉ шаг', 'click' => '👆 клик', 'bc_sent' => '📣 рассылка', 'group_add' => '➕ группа', 'group_remove' => '➖ группа', 'postback' => '🔁 постбек', 'message' => '💬 сообщение', 'blocked' => '🚫 блок', 'unblocked' => '✅ разблок', 'flow_start' => '🔗 цепочка', 'flow_done' => '🏁 цепочка готова', 'send_error' => '⚠ ошибка'];
 $pct = fn($a, $b) => $b > 0 ? round($a / $b * 100) . '%' : '—';
 ?>
 <div class="row"><h1 style="margin:0">Дашборд</h1><span class="sp"></span>
-<?php foreach ([7, 14, 30, 90] as $d) echo '<a class="btn sm ' . ($d === $days ? '' : 'sec') . '" href="?p=dashboard&days=' . $d . '">' . $d . ' дн.</a>'; ?></div>
-<?php if (!setting('bot_token')): ?><div class="flash err" style="margin-top:14px">Токен бота не задан — <a href="?p=settings">перейдите в настройки</a>.</div><?php endif; ?>
+<form method="get"><input type="hidden" name="p" value="dashboard"><input type="hidden" name="days" value="<?= $days ?>"><select name="bot" onchange="this.form.submit()" style="width:auto"><?= bot_options($bot, 'Все боты') ?></select><noscript><button class="btn sm">OK</button></noscript></form>
+<?php foreach ([7, 14, 30, 90] as $d) echo '<a class="btn sm ' . ($d === $days ? '' : 'sec') . '" href="?p=dashboard&bot=' . $bot . '&days=' . $d . '">' . $d . ' дн.</a>'; ?></div>
+<?php if (!val('SELECT COUNT(*) FROM bots')): ?><div class="flash err" style="margin-top:14px">Нет ни одного бота — <a href="?p=bots">подключите бота</a>.</div><?php endif; ?>
 <?php if (now() - (int)setting('last_tick', '0') > 300): ?><div class="flash err" style="margin-top:14px">Планировщик не запускался более 5 минут: задержки в цепочках и рассылки по расписанию не будут работать. Настройте cron (см. <a href="?p=settings">Настройки</a>).</div><?php endif; ?>
 <div class="cards" style="margin-top:14px"><?php foreach ($kpi as [$l, $v]) echo '<div class="kpi"><b>' . number_format($v, 0, '', ' ') . '</b><span>' . h($l) . '</span></div>'; ?></div>
 
 <div class="grid2"><div class="card"><h2>Новые пользователи</h2><?= spark($newSeries) ?></div>
 <div class="card"><h2>Клики по кнопкам</h2><?= spark($clickSeries) ?></div></div>
 
+<?php if (!$bot && (int)val('SELECT COUNT(*) FROM bots') > 1): ?>
+<div class="card"><h2>Боты</h2><table><tr><th>Бот</th><th>Пользователей</th><th>Новых за период</th><th>Заблокировали</th><th>Клики за период</th></tr>
+<?php foreach (rows('SELECT b.*, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id) users, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id AND u.created_at >= ?) fresh,
+  (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id AND u.status = \'blocked\') blocked,
+  (SELECT COUNT(*) FROM events e JOIN users u ON u.id = e.user_id WHERE u.bot_id = b.id AND e.type = \'click\' AND e.created_at >= ?) clicks FROM bots b ORDER BY b.id', [$since, $since]) as $bb): ?>
+<tr><td><a href="?p=dashboard&bot=<?= $bb['id'] ?>&days=<?= $days ?>"><?= h(bot_label((int)$bb['id'])) ?></a></td><td><?= $bb['users'] ?></td><td><?= $bb['fresh'] ?></td><td><?= $bb['blocked'] ?></td><td><?= $bb['clicks'] ?></td></tr><?php endforeach; ?></table></div>
+<?php endif; ?>
 <div class="card"><h2>Источники <span class="muted">(пришли за период)</span></h2><table><tr><th>Источник</th><th>Польз.</th><th>Кликнули</th><th>Внешнее событие</th><th>В группах</th><th>Заблок.</th></tr>
 <?php foreach ($sources as $s): ?><tr><td><a href="?p=users&source=<?= urlencode($s['s'] === '(без источника)' ? '-' : $s['s']) ?>"><?= h($s['s']) ?></a></td><td><?= $s['users'] ?></td>
 <td><?= $s['clicked'] ?> <span class="muted"><?= $pct($s['clicked'], $s['users']) ?></span></td><td><?= $s['converted'] ?> <span class="muted"><?= $pct($s['converted'], $s['users']) ?></span></td>

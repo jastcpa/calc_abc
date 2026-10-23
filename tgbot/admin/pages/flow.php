@@ -15,8 +15,9 @@ if (is_post()) {
     $do = post('do');
     if ($do === 'save_flow') {
         $isDef = isset($_POST['is_default']) ? 1 : 0;
-        if ($isDef) q('UPDATE flows SET is_default = 0');
-        update('flows', $fid, ['name' => mb_substr(post('name'), 0, 80) ?: 'Цепочка', 'source' => mb_substr(post('source'), 0, 64),
+        $bot = (int)post('bot_id');
+        if ($isDef) q('UPDATE flows SET is_default = 0 WHERE bot_id = ?', [$bot]);
+        update('flows', $fid, ['bot_id' => $bot, 'name' => mb_substr(post('name'), 0, 80) ?: 'Цепочка', 'source' => mb_substr(post('source'), 0, 64),
             'is_default' => $isDef, 'active' => isset($_POST['active']) ? 1 : 0, 'group_id' => (int)post('group_id')]);
         flash('Настройки цепочки сохранены');
     } elseif ($do === 'step_add') {
@@ -28,18 +29,17 @@ if (is_post()) {
         $step = row('SELECT * FROM steps WHERE id = ? AND flow_id = ?', [$sid, $fid]);
         if ($step) {
             if ($do === 'step_save' || $do === 'step_test') {
-                $btn = json_decode(post('buttons', '[]'), true);
                 $data = [
-                    'delay' => max(0, (int)post('delay_val')) * ($units[post('delay_unit')][0] ?? 60),
-                    'body' => (string)($_POST['body'] ?? ''), 'image' => post('image'),
-                    'buttons' => json_encode(is_array($btn) ? $btn : [], JSON_UNESCAPED_UNICODE), 'group_id' => (int)post('group_id'),
+                    'delay' => min(3650 * 86400, max(0, (int)post('delay_val')) * ($units[post('delay_unit')][0] ?? 60)),
+                    'body' => mb_substr((string)($_POST['body'] ?? ''), 0, 4096), 'image' => clean_image(post('image')),
+                    'buttons' => sanitize_buttons(json_decode(post('buttons', '[]'), true)), 'group_id' => (int)post('group_id'),
                 ];
                 update('steps', $sid, $data);
                 if ($do === 'step_test') {
                     $tg = (int)setting('admin_tg_id', '0');
                     if (!$tg) flash('Укажите свой Telegram ID в настройках', 'err');
                     else {
-                        $r = send_to_user(['id' => 0, 'tg_id' => $tg, 'first_name' => 'Админ', 'last_name' => '', 'username' => '', 'source' => ''], $data, 's' . $sid);
+                        $r = send_to_user(['id' => 0, 'bot_id' => (int)($flow['bot_id'] ?: val('SELECT MIN(id) FROM bots WHERE active = 1')), 'tg_id' => $tg, 'first_name' => 'Админ', 'last_name' => '', 'username' => '', 'source' => ''], $data, 's' . $sid);
                         flash(($r['ok'] ?? false) ? 'Тест отправлен вам в Telegram' : 'Ошибка отправки: ' . ($r['description'] ?? '?'), ($r['ok'] ?? false) ? 'ok' : 'err');
                     }
                 } else flash('Шаг ' . ($step['position'] + 1) . ' сохранён');
@@ -64,11 +64,12 @@ foreach (rows("SELECT ref, COUNT(*) c, COUNT(DISTINCT user_id) u FROM events WHE
 <div class="card"><h2>Параметры цепочки</h2>
 <form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="save_flow">
 <div class="grid3"><div><label>Название</label><input name="name" value="<?= h($flow['name']) ?>"></div>
+<div><label>Бот</label><select name="bot_id"><?= bot_options((int)$flow['bot_id'], 'Все боты') ?></select></div>
 <div><label>Источник (start-параметр)</label><input name="source" value="<?= h($flow['source']) ?>" placeholder="пусто = любой"></div>
 <div><label>При входе добавить в группу</label><select name="group_id"><?= group_options((int)$flow['group_id']) ?></select></div></div>
 <div class="row"><label class="chk"><input type="checkbox" name="active" <?= $flow['active'] ? 'checked' : '' ?>> Активна</label>
 <label class="chk"><input type="checkbox" name="is_default" <?= $flow['is_default'] ? 'checked' : '' ?>> По умолчанию (для пользователей без подходящего источника)</label></div>
-<?php if ($flow['source'] && setting('bot_username')): ?><p class="muted">Ссылка: <code data-copy>https://t.me/<?= h(setting('bot_username')) ?>?start=<?= h($flow['source']) ?></code></p><?php endif; ?>
+<?php if ($flow['source']): foreach (rows('SELECT username FROM bots WHERE username <> \'\' AND (? = 0 OR id = ?)', [$flow['bot_id'], $flow['bot_id']]) as $bb): ?><p class="muted">Ссылка: <code data-copy>https://t.me/<?= h($bb['username']) ?>?start=<?= h($flow['source']) ?></code></p><?php endforeach; endif; ?>
 <button class="btn">Сохранить</button></form></div>
 
 <?php foreach ($steps as $i => $s): [$dv, $du] = split_delay((int)$s['delay']); $st = $stat['s' . $s['id']] ?? null; ?>

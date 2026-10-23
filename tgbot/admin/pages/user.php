@@ -23,7 +23,7 @@ $evNames = ['start' => '▶ /start', 'step_sent' => '✉ Шаг цепочки �
 <h1><?= h(user_name($u)) ?> <?= $u['status'] === 'blocked' ? '<span class="badge r">заблокировал бота</span>' : '' ?></h1>
 <div class="grid2">
 <div class="card"><h2>Профиль</h2>
-<p>Telegram ID: <code><?= $u['tg_id'] ?></code><?= $u['username'] ? ' · <a href="https://t.me/' . h($u['username']) . '" target="_blank" rel="noopener">@' . h($u['username']) . '</a>' : '' ?></p>
+<p>Бот: <b><?= h(bot_label((int)$u['bot_id'])) ?></b> · Telegram ID: <code><?= $u['tg_id'] ?></code><?= $u['username'] ? ' · <a href="https://t.me/' . h($u['username']) . '" target="_blank" rel="noopener">@' . h($u['username']) . '</a>' : '' ?></p>
 <p>Источник: <b><?= h($u['source'] ?: '—') ?></b> · Метка: <code><?= h($u['label'] ?: '—') ?></code></p>
 <p>Start-параметр: <code><?= h($u['start_param'] ?: '—') ?></code></p>
 <p>Пришёл: <?= fmt_dt((int)$u['created_at']) ?> · Активность: <?= fmt_dt((int)$u['last_seen']) ?></p>

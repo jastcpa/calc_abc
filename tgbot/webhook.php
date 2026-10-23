@@ -1,14 +1,16 @@
 <?php
-// Точка входа для Telegram (setWebhook). Всегда отвечает 200.
+// Точка входа для Telegram: webhook.php?b=<ID бота>. Всегда отвечает 200 на валидный запрос.
 declare(strict_types=1);
 require __DIR__ . '/lib/bootstrap.php';
 
 if (!is_installed()) { http_response_code(503); exit('not installed'); }
-$secret = (string)setting('webhook_secret');
-if ($secret !== '' && !hash_equals($secret, $_SERVER['HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN'] ?? '')) {
+$bot = row('SELECT * FROM bots WHERE id = ?', [(int)($_GET['b'] ?? 0)]);
+$given = (string)($_SERVER['HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN'] ?? '');
+if (!$bot || $bot['secret'] === '' || !hash_equals($bot['secret'], $given)) {
     http_response_code(403);
     exit('forbidden');
 }
+$botId = (int)$bot['id'];
 $update = json_decode((string)file_get_contents('php://input'), true);
 
 // быстрый ответ Telegram, дальше обрабатываем в фоне
@@ -18,38 +20,16 @@ header('Content-Length: 2');
 echo 'ok';
 if (function_exists('fastcgi_finish_request')) fastcgi_finish_request(); else { @ob_end_flush(); flush(); }
 
-if (!is_array($update)) exit;
+if (!is_array($update) || !$bot['active']) exit;
 
 try {
-    if (isset($update['callback_query'])) {
-        handle_callback($update['callback_query']);
-    } elseif (isset($update['my_chat_member'])) {
-        $m = $update['my_chat_member'];
-        if (($m['chat']['type'] ?? '') === 'private') {
-            $u = row('SELECT id FROM users WHERE tg_id = ?', [(int)$m['chat']['id']]);
-            $st = $m['new_chat_member']['status'] ?? '';
-            if ($u && $st === 'kicked') user_blocked((int)$u['id']);
-            elseif ($u && $st === 'member') {
-                q("UPDATE users SET status='active', blocked_at=NULL WHERE id=?", [$u['id']]);
-                ev((int)$u['id'], 'unblocked');
-            }
-        }
-    } elseif (isset($update['message']) && ($update['message']['chat']['type'] ?? '') === 'private' && isset($update['message']['from'])) {
-        $msg = $update['message'];
-        $text = trim((string)($msg['text'] ?? ''));
-        if (preg_match('~^/start(?:@\w+)?(?:\s+(\S+))?$~u', $text, $mm)) {
-            $u = user_touch($msg['from'], $mm[1] ?? null);
-            ev((int)$u['id'], 'start', (string)($mm[1] ?? ''), (string)($u['source'] ?? ''));
-            flow_enroll($u, !$u['_new'] && setting('restart_on_start', '0') === '1');
-            flow_tick(time() + 20, (int)$u['id']);
-        } else {
-            $u = user_touch($msg['from']);
-            ev((int)$u['id'], 'message', '', mb_substr($text, 0, 100));
-            $reply = trim((string)setting('default_reply', ''));
-            if ($reply !== '') send_to_user($u, ['body' => $reply, 'image' => '', 'buttons' => '[]'], '');
-        }
+    // защита от повторной доставки одного и того же апдейта
+    $uid = (int)($update['update_id'] ?? 0);
+    if ($uid > 0) {
+        if (q('UPDATE bots SET last_update = ? WHERE id = ? AND last_update < ?', [$uid, $botId, $uid])->rowCount() === 0) exit;
     }
-    // псевдо-крон: если cron не настроен, отправка по расписанию идёт при активности бота
+    handle_update($update, $botId);
+    // псевдо-крон: если cron не настроен, отправка по расписанию идёт при активности ботов
     if (now() - (int)setting('last_tick', '0') > 60) run_tick(15);
     else hooks_process(5);
 } catch (Throwable $e) {

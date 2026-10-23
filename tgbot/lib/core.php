@@ -10,15 +10,25 @@ function cfg(string $key = '', $default = null)
 {
     static $c = null;
     if ($c === null) {
-        $f = APP_ROOT . '/config.php';
+        $f = config_path();
         $c = is_file($f) ? (require $f) : [];
     }
     return $key === '' ? $c : ($c[$key] ?? $default);
 }
 
+function config_path(): string
+{
+    return getenv('TGBOT_CONFIG') ?: APP_ROOT . '/config.php';
+}
+
 function is_installed(): bool
 {
-    return is_file(APP_ROOT . '/config.php');
+    return is_file(config_path());
+}
+
+function data_dir(): string
+{
+    return dirname((string)cfg('db', APP_ROOT . '/data/bot.sqlite'));
 }
 
 function db(): PDO
@@ -63,16 +73,21 @@ function migrate(): void
 {
     $sql = <<<'SQL'
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS bots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, token TEXT NOT NULL, username TEXT,
+  secret TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, last_update INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS login_fail (ip TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS lf_ip ON login_fail(ip, at);
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id INTEGER UNIQUE NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL DEFAULT 0, tg_id INTEGER NOT NULL,
   username TEXT, first_name TEXT, last_name TEXT, lang TEXT,
   source TEXT, label TEXT, start_param TEXT,
   status TEXT NOT NULL DEFAULT 'active',
-  created_at INTEGER NOT NULL, last_seen INTEGER, blocked_at INTEGER
+  created_at INTEGER NOT NULL, last_seen INTEGER, blocked_at INTEGER,
+  UNIQUE (bot_id, tg_id)
 );
-CREATE INDEX IF NOT EXISTS users_source ON users(source);
-CREATE INDEX IF NOT EXISTS users_label ON users(label);
-CREATE INDEX IF NOT EXISTS users_created ON users(created_at);
 CREATE TABLE IF NOT EXISTS groups (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
   color TEXT DEFAULT '#3b82f6', created_at INTEGER NOT NULL
@@ -83,7 +98,7 @@ CREATE TABLE IF NOT EXISTS user_groups (
 );
 CREATE INDEX IF NOT EXISTS ug_group ON user_groups(group_id);
 CREATE TABLE IF NOT EXISTS flows (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1, group_id INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
@@ -101,7 +116,7 @@ CREATE TABLE IF NOT EXISTS user_flows (
 );
 CREATE INDEX IF NOT EXISTS uf_due ON user_flows(status, next_at);
 CREATE TABLE IF NOT EXISTS broadcasts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+  id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
   image TEXT NOT NULL DEFAULT '', buttons TEXT NOT NULL DEFAULT '[]',
   inc_groups TEXT NOT NULL DEFAULT '[]', exc_groups TEXT NOT NULL DEFAULT '[]',
   send_at INTEGER, status TEXT NOT NULL DEFAULT 'draft',
@@ -137,8 +152,28 @@ CREATE TABLE IF NOT EXISTS out_queue (
 );
 CREATE INDEX IF NOT EXISTS oq_due ON out_queue(status, next_at);
 SQL;
+    // апгрейд со старой (однобот.) схемы: пересоздаём users с UNIQUE(bot_id, tg_id), добавляем bot_id
+    $has = fn(string $t, string $c) => in_array($c, array_column(rows("PRAGMA table_info($t)"), 'name'), true);
+    $legacyUsers = $has('users', 'id') && !$has('users', 'bot_id');
+    if ($legacyUsers) db()->exec('ALTER TABLE users RENAME TO users_old');
     foreach (array_filter(array_map('trim', explode(';', $sql))) as $stmt) {
         db()->exec($stmt);
+    }
+    foreach (['flows', 'broadcasts'] as $t) if (!$has($t, 'bot_id')) db()->exec("ALTER TABLE $t ADD COLUMN bot_id INTEGER NOT NULL DEFAULT 0");
+    $bot = null;
+    if ((int)val('SELECT COUNT(*) FROM bots') === 0 && ($tok = val("SELECT v FROM settings WHERE k = 'bot_token'"))) {
+        $bot = insert('bots', ['name' => 'Основной бот', 'token' => $tok, 'username' => val("SELECT v FROM settings WHERE k = 'bot_username'"),
+            'secret' => (string)(val("SELECT v FROM settings WHERE k = 'webhook_secret'") ?: rand_token(24)), 'active' => 1, 'created_at' => now()]);
+    }
+    if ($legacyUsers) {
+        $bid = $bot ?: (int)val('SELECT MIN(id) FROM bots');
+        db()->exec("INSERT INTO users (id, bot_id, tg_id, username, first_name, last_name, lang, source, label, start_param, status, created_at, last_seen, blocked_at)
+          SELECT id, $bid, tg_id, username, first_name, last_name, lang, source, label, start_param, status, created_at, last_seen, blocked_at FROM users_old");
+        db()->exec('DROP TABLE users_old');
+        if ($bid) foreach (['flows', 'broadcasts'] as $t) db()->exec("UPDATE $t SET bot_id = $bid");
+    }
+    foreach (['users_source ON users(source)', 'users_label ON users(label)', 'users_created ON users(created_at)', 'users_bot ON users(bot_id)'] as $ix) {
+        db()->exec('CREATE INDEX IF NOT EXISTS ' . $ix);
     }
 }
 
