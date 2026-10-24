@@ -47,7 +47,7 @@ $bl = $get($M, '?p=broadcasts')['body'];
 ok(str_contains($bl, 'Рассылка бота 1') && !str_contains($bl, 'Рассылка бота 2'), 'список рассылок ограничен ботом');
 eq($get($M, '?p=broadcast&id=' . $bcB2)['code'], 302, 'рассылка чужого бота недоступна по прямой ссылке');
 $kpi = $get($M, '?p=dashboard')['body'];
-preg_match('/<b>(\d+)<\/b><span>Всего пользователей/', $kpi, $mm);
+preg_match('/<b>(\d+)<\/b><span>Всего подписчиков/', $kpi, $mm);
 eq((int)($mm[1] ?? -1), (int)val('SELECT COUNT(*) FROM users WHERE bot_id = ?', [$b1]), 'дашборд считает только своего бота');
 ok((int)val('SELECT COUNT(*) FROM users') > (int)($mm[1] ?? 0), 'в базе есть подписчики и других ботов (проверка не тривиальна)');
 $before = (int)val('SELECT COUNT(*) FROM broadcasts');

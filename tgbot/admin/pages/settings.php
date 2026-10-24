@@ -20,7 +20,7 @@ if (is_post()) {
     redirect('?p=settings');
 }
 ?>
-<h1>Настройки</h1>
+<?= pagehead('Настройки') ?>
 <div class="card"><h2>Общие параметры</h2>
 <form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="save">
 <p class="muted">Токены ботов и webhook — в разделе <a href="?p=bots">Боты</a>.</p>

@@ -2,7 +2,7 @@
 $title = 'Подписчики';
 $f = [
     'q' => trim((string)($_GET['q'] ?? '')), 'group' => (int)($_GET['group'] ?? 0), 'nogroup' => (int)($_GET['nogroup'] ?? 0),
-    'bot' => (int)($_GET['bot'] ?? 0), 'source' => trim((string)($_GET['source'] ?? '')), 'status' => (string)($_GET['status'] ?? ''),
+    'bot' => effective_bot(), 'source' => trim((string)($_GET['source'] ?? '')), 'status' => (string)($_GET['status'] ?? ''),
 ];
 $w = ['1=1']; $qp = [];
 if ($f['q'] !== '') {
@@ -58,32 +58,45 @@ if ($list) {
 $sources = rows("SELECT source, COUNT(*) c FROM users WHERE source IS NOT NULL AND source <> ''" . scope_sql('bot_id') . " GROUP BY source ORDER BY c DESC");
 $qs = array_filter($f);
 ?>
-<h1>Подписчики <span class="muted">(<?= $total ?>)</span></h1>
-<div class="card"><form method="get" class="row"><input type="hidden" name="p" value="users">
-<input name="q" value="<?= h($f['q']) ?>" placeholder="Поиск: имя, @username, ID, метка" style="min-width:230px">
-<select name="bot"><?= bot_options($f['bot'], 'Любой бот') ?></select>
-<select name="group"><?= group_options($f['group'], 'Любая группа (в группе)') ?></select>
-<select name="nogroup"><?= group_options($f['nogroup'], 'Не состоит в группе') ?></select>
-<select name="source"><option value="">Любой источник</option><option value="-" <?= $f['source'] === '-' ? 'selected' : '' ?>>— без источника —</option>
+<?php
+$gnames = array_column(rows('SELECT id, name FROM groups'), 'name', 'id');
+$chips = [];   // активные фильтры → «чипы» с кнопкой сброса
+$drop = fn(string $k) => '?' . http_build_query(array_diff_key($qs + ['p' => 'users', 'bot' => $f['bot'] ?: null], [$k => 1]));
+if ($f['q'] !== '') $chips['q'] = 'Поиск: ' . $f['q'];
+if ($f['group']) $chips['group'] = 'В группе: ' . ($gnames[$f['group']] ?? '?');
+if ($f['nogroup']) $chips['nogroup'] = 'Не в группе: ' . ($gnames[$f['nogroup']] ?? '?');
+if ($f['source'] !== '') $chips['source'] = 'Источник: ' . ($f['source'] === '-' ? 'без источника' : $f['source']);
+if ($f['status'] !== '') $chips['status'] = $f['status'] === 'blocked' ? 'Заблокировали бота' : 'Активные';
+$showBot = !$f['bot'] && count(visible_bots()) > 1;
+?>
+<?= pagehead('Подписчики', can('users.export') ? '<a class="btn sec" href="?' . h(http_build_query($qs + ['p' => 'users', 'export' => 1])) . '">⬇ Экспорт CSV</a>' : '') ?>
+<div class="card" style="padding:12px 16px"><form method="get" class="row"><input type="hidden" name="p" value="users"><?php if (isset($_GET['bot'])): ?><input type="hidden" name="bot" value="<?= (int)$_GET['bot'] ?>"><?php endif; ?>
+<input name="q" value="<?= h($f['q']) ?>" placeholder="Поиск: имя, @username, ID, метка" style="min-width:240px;flex:1" aria-label="Поиск">
+<select name="group" aria-label="В группе"><?= group_options($f['group'], 'Любая группа') ?></select>
+<select name="nogroup" aria-label="Не в группе"><?= group_options($f['nogroup'], 'Не состоит в группе…') ?></select>
+<select name="source" aria-label="Источник"><option value="">Любой источник</option><option value="-" <?= $f['source'] === '-' ? 'selected' : '' ?>>— без источника —</option>
 <?php foreach ($sources as $s): ?><option value="<?= h($s['source']) ?>" <?= $f['source'] === $s['source'] ? 'selected' : '' ?>><?= h($s['source']) ?> (<?= $s['c'] ?>)</option><?php endforeach; ?></select>
-<select name="status"><option value="">Любой статус</option><option value="active" <?= $f['status'] === 'active' ? 'selected' : '' ?>>Активные</option><option value="blocked" <?= $f['status'] === 'blocked' ? 'selected' : '' ?>>Заблокировали бота</option></select>
-<button class="btn">Фильтр</button><a class="btn sec" href="?p=users">Сброс</a>
-<?php if (can('users.export')): ?><a class="btn sec" href="?<?= h(http_build_query($qs + ['p' => 'users', 'export' => 1])) ?>">⬇ CSV</a><?php endif; ?></form></div>
+<select name="status" aria-label="Статус"><option value="">Любой статус</option><option value="active" <?= $f['status'] === 'active' ? 'selected' : '' ?>>Активные</option><option value="blocked" <?= $f['status'] === 'blocked' ? 'selected' : '' ?>>Заблокировали бота</option></select>
+<button class="btn">Применить</button></form>
+<?php if ($chips): ?><div class="row" style="margin-top:10px"><span class="muted">Фильтры:</span><?php foreach ($chips as $k => $t): ?><span class="chipx"><?= h($t) ?> <a href="<?= h($drop($k)) ?>" aria-label="Убрать фильтр">×</a></span><?php endforeach; ?><a href="?p=users" class="btn ghost sm">Сбросить всё</a></div><?php endif; ?></div>
+<?php if ($f['bot']): ?><div class="row" style="margin-bottom:12px"><span class="chipx"><?= icon('bot') ?> <?= h(bot_label($f['bot'])) ?> <a href="?p=users&bot=0" aria-label="Показать все боты">×</a></span></div><?php endif; ?>
 
-<form method="post" class="card"><?= csrf_field() ?><input type="hidden" name="do" value="bulk">
-<div class="row" style="margin-bottom:10px"><b>Выбранным:</b>
-<select name="group_id"><?= group_options(0, '— группа —') ?></select>
-<button class="btn sm" name="action" value="add">Добавить в группу</button><button class="btn sm sec" name="action" value="remove">Убрать из группы</button>
-<label class="chk" style="margin:0"><input type="checkbox" name="all_filtered"> ко всем <?= $total ?> найденным по фильтру</label></div>
-<div style="overflow-x:auto"><table><tr><th><input type="checkbox" id="checkall" style="width:auto"></th><th>Пользователь</th><th>Бот</th><th>Источник</th><th>Метка</th><th>Группы</th><th>Статус</th><th>Пришёл</th></tr>
+<form method="post" class="card" style="padding:0"><?= csrf_field() ?><input type="hidden" name="do" value="bulk">
+<div class="row" style="padding:12px 16px;border-bottom:1px solid var(--line)"><b>Найдено: <?= number_format($total, 0, '', ' ') ?></b><span class="muted">Отметьте строки, чтобы добавить их в группу или убрать из неё</span></div>
+<?php if (!$list): ?><?= empty_state('inbox', $chips || $f['bot'] ? 'Никого не найдено' : 'Подписчиков пока нет', $chips ? 'Попробуйте ослабить фильтры.' : 'Они появятся, когда кто-то нажмёт /start у вашего бота. Сформируйте ссылку с источником на странице «Ссылки».', $chips ? '<a class="btn sec" href="?p=users">Сбросить фильтры</a>' : (can('links.view') ? '<a class="btn" href="?p=links">Сформировать ссылку</a>' : '')) ?><?php else: ?>
+<div class="table-wrap"><table><tr><th style="width:32px"><input type="checkbox" id="checkall" aria-label="Выбрать все на странице"></th><th>Подписчик</th><?php if ($showBot): ?><th>Бот</th><?php endif; ?><th>Источник</th><th>Метка</th><th>Группы</th><th>Статус</th><th>Пришёл</th></tr>
 <?php foreach ($list as $u): ?><tr>
-<td><input type="checkbox" name="ids[]" value="<?= $u['id'] ?>" style="width:auto"></td>
-<td><a href="?p=user&id=<?= $u['id'] ?>"><?= h(user_name($u)) ?></a><br><span class="muted"><?= $u['username'] ? '@' . h($u['username']) . ' · ' : '' ?><?= $u['tg_id'] ?></span></td>
-<td><?= h(bot_label((int)$u['bot_id'])) ?></td>
+<td><input type="checkbox" name="ids[]" value="<?= $u['id'] ?>" aria-label="Выбрать"></td>
+<td><div class="row" style="flex-wrap:nowrap"><span class="avatar" style="background:#475569"><?= h(initials(user_name($u))) ?></span><div><a href="?p=user&id=<?= $u['id'] ?>"><?= h(user_name($u)) ?></a><br><span class="muted"><?= $u['username'] ? '@' . h($u['username']) . ' · ' : '' ?><?= $u['tg_id'] ?></span></div></div></td>
+<?php if ($showBot): ?><td><?= h(bot_label((int)$u['bot_id'])) ?></td><?php endif; ?>
 <td><?= $u['source'] ? '<a href="?p=users&source=' . urlencode($u['source']) . '">' . h($u['source']) . '</a>' : '<span class="muted">—</span>' ?></td>
 <td class="mono"><?= h($u['label']) ?></td>
 <td><?php foreach ($ugroups[$u['id']] ?? [] as $g) echo group_tag($g); ?></td>
 <td><?= $u['status'] === 'blocked' ? '<span class="badge r">заблокировал</span>' : '<span class="badge g">активен</span>' ?></td>
 <td><?= fmt_dt((int)$u['created_at']) ?></td></tr>
-<?php endforeach; if (!$list): ?><tr><td colspan="8" class="muted">Никого не найдено</td></tr><?php endif; ?></table></div>
-<?= pager($total, $page, $per, $qs + ['p' => 'users']) ?></form>
+<?php endforeach; ?></table></div><?php endif; ?>
+<div style="padding:10px 16px"><?= pager($total, $page, $per, $qs + ['p' => 'users']) ?></div>
+<div class="bulkbar" id="bulkbar" role="toolbar" aria-label="Массовые действия"><b>Выбрано: <span id="bulkn">0</span></b>
+<select name="group_id" aria-label="Группа"><?= group_options(0, '— группа —') ?></select>
+<button class="btn sm" name="action" value="add">Добавить в группу</button><button class="btn sm sec" name="action" value="remove">Убрать из группы</button>
+<label class="chk" style="margin:0"><input type="checkbox" name="all_filtered"> все <?= $total ?> по фильтру</label></div></form>

@@ -21,7 +21,7 @@ $events = rows('SELECT * FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 20
 $evNames = ['start' => '▶ /start', 'step_sent' => '✉ Шаг цепочки отправлен', 'click' => '👆 Клик по кнопке', 'bc_sent' => '📣 Рассылка получена', 'group_add' => '➕ В группу', 'group_remove' => '➖ Из группы',
     'postback' => '🔁 Внешнее событие', 'message' => '💬 Сообщение боту', 'blocked' => '🚫 Заблокировал бота', 'unblocked' => '✅ Разблокировал', 'flow_start' => '🔗 Вход в цепочку', 'flow_done' => '🏁 Цепочка завершена', 'send_error' => '⚠ Ошибка отправки'];
 ?>
-<h1><?= h(user_name($u)) ?> <?= $u['status'] === 'blocked' ? '<span class="badge r">заблокировал бота</span>' : '' ?></h1>
+<?= pagehead(user_name($u), ($u['status'] === 'blocked' ? '<span class="badge r">заблокировал бота</span>' : '<span class="badge g">активен</span>') . '<a class="btn sec" href="?p=users">← Подписчики</a>') ?>
 <div class="grid2">
 <div class="card"><h2>Профиль</h2>
 <p>Бот: <b><?= h(bot_label((int)$u['bot_id'])) ?></b> · Telegram ID: <code><?= $u['tg_id'] ?></code><?= $u['username'] ? ' · <a href="https://t.me/' . h($u['username']) . '" target="_blank" rel="noopener">@' . h($u['username']) . '</a>' : '' ?></p>
@@ -34,7 +34,7 @@ $evNames = ['start' => '▶ /start', 'step_sent' => '✉ Шаг цепочки �
 <form method="post" class="row" style="margin-top:12px"><?= csrf_field() ?><input type="hidden" name="do" value="add_group"><select name="group_id"><?= group_options(0, '— добавить в группу —') ?></select><button class="btn sm">Добавить</button></form>
 <h3 style="margin-top:16px">Цепочки</h3>
 <?php foreach ($flows as $f): ?><p><?= h($f['name']) ?> — <span class="badge"><?= h($f['status']) ?></span>, отправлено шагов: <?= (int)$f['last_pos'] + 1 ?><?= $f['status'] === 'active' ? ', следующий: ' . fmt_dt((int)$f['next_at'], 'd.m H:i') : '' ?></p><?php endforeach; if (!$flows) echo '<p class="muted">Не в цепочках</p>'; ?></div></div>
-<div class="card"><h2>История действий</h2><table><tr><th>Время</th><th>Событие</th><th>Подробности</th></tr>
+<div class="card"><h2>История действий</h2><div class="table-wrap"><table><tr><th>Время</th><th>Событие</th><th>Подробности</th></tr>
 <?php foreach ($events as $e): ?><tr><td><?= fmt_dt((int)$e['created_at'], 'd.m H:i:s') ?></td><td><?= h($evNames[$e['type']] ?? $e['type']) ?></td>
 <td><?php
  if (in_array($e['type'], ['click', 'step_sent', 'bc_sent'], true)) echo h(msg_label(explode(':', $e['ref'])[0])) . ($e['label'] ? ' → «' . h($e['label']) . '»' : '');

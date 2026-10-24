@@ -55,11 +55,11 @@ if ($edit === 'new' || $er):
 
 $list = rows('SELECT r.*, (SELECT COUNT(*) FROM admin_users a WHERE a.role_id = r.id) members FROM admin_roles r ORDER BY r.is_admin DESC, r.name');
 ?>
-<div class="row"><h1 style="margin:0">Роли и права</h1><span class="sp"></span><a class="btn" href="?p=roles&edit=new">+ Роль</a><a class="btn sec" href="?p=team">Команда</a></div>
-<div class="card" style="margin-top:14px"><table><tr><th>Роль</th><th>Описание</th><th>Права</th><th>Пользователей</th><th></th></tr>
+<?= pagehead('Роли и права', '<a class="btn" href="?p=roles&edit=new">' . icon('plus') . ' Роль</a><a class="btn sec" href="?p=team">Команда</a>', 'Роль — набор прав. Доступ к конкретным ботам задаётся у каждого пользователя отдельно.') ?>
+<div class="card" style="margin-top:14px"><div class="table-wrap"><table><tr><th>Роль</th><th>Описание</th><th>Права</th><th>Пользователей</th><th></th></tr>
 <?php foreach ($list as $r): $pp = $r['is_admin'] ? all_perms() : json_arr($r['perms']); ?><tr><td><b><?= h($r['name']) ?></b> <?= $r['is_admin'] ? '<span class="badge r">полный доступ</span>' : '' ?></td>
 <td class="muted"><?= h($r['description']) ?></td><td><?= $r['is_admin'] ? 'все' : count($pp) . ' из ' . count(all_perms()) ?></td>
-<td><a href="?p=team&role=<?= $r['id'] ?>"><?= $r['members'] ?></a></td><td><a class="btn sm sec" href="?p=roles&edit=<?= $r['id'] ?>">Изменить</a></td></tr><?php endforeach; ?></table></div>
-<div class="card"><h2>Матрица прав</h2><div style="overflow-x:auto"><table><tr><th>Право</th><?php foreach ($list as $r) echo '<th>' . h($r['name']) . '</th>'; ?></tr>
+<td><a href="?p=team&role=<?= $r['id'] ?>"><?= $r['members'] ?></a></td><td><a class="btn sm sec" href="?p=roles&edit=<?= $r['id'] ?>">Изменить</a></td></tr><?php endforeach; ?></table></div></div>
+<div class="card"><h2>Матрица прав</h2><div style="overflow-x:auto"><div class="table-wrap"><table><tr><th>Право</th><?php foreach ($list as $r) echo '<th>' . h($r['name']) . '</th>'; ?></tr>
 <?php foreach (PERM_GROUPS as $gname => $g) foreach ($g as $k => $label): ?><tr><td><span class="muted"><?= h($gname) ?>:</span> <?= h(mb_substr($label, 0, 48)) ?></td>
-<?php foreach ($list as $r): $on = $r['is_admin'] || in_array($k, json_arr($r['perms']), true); ?><td><?= $on ? '<span class="ok">✔</span>' : '<span class="muted">—</span>' ?></td><?php endforeach; ?></tr><?php endforeach; ?></table></div></div>
+<?php foreach ($list as $r): $on = $r['is_admin'] || in_array($k, json_arr($r['perms']), true); ?><td><?= $on ? '<span class="ok">✔</span>' : '<span class="muted">—</span>' ?></td><?php endforeach; ?></tr><?php endforeach; ?></table></div></div></div>

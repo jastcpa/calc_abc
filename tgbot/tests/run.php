@@ -488,6 +488,7 @@ ok($r['code'] === 302, 'выход');
 ok(str_contains(http('GET', '/admin/index.php?p=users')['body'], 'name="password"'), 'после выхода доступ закрыт');
 
 require __DIR__ . '/rbac_http.inc';
+require __DIR__ . '/ux_http.inc';
 
 proc_terminate($srv); proc_terminate($mock);
 

@@ -20,7 +20,7 @@ if (is_post()) {
 }
 $bn = visible_bots();
 ?>
-<h1>Мой профиль</h1>
+<?= pagehead('Мой профиль') ?>
 <div class="grid2"><div class="card"><h2><?= h($me['login']) ?></h2>
 <p>Роль: <span class="badge <?= $me['is_admin'] ? 'r' : '' ?>"><?= h($me['role_name']) ?></span></p>
 <p>Боты: <?= bot_scope() === null ? '<b>все</b>' : ($bn ? h(implode(', ', array_map(fn($b) => $b['username'] ? '@' . $b['username'] : $b['name'], $bn))) : '<span class="danger">не назначены</span>') ?></p>

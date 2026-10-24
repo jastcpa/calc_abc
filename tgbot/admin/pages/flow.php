@@ -24,7 +24,7 @@ if (is_post()) {
         flash('Настройки цепочки сохранены');
     } elseif ($do === 'step_add') {
         $pos = (int)val('SELECT COALESCE(MAX(position), -1) + 1 FROM steps WHERE flow_id = ?', [$fid]);
-        insert('steps', ['flow_id' => $fid, 'position' => $pos, 'delay' => 3600, 'body' => 'Новое сообщение']);
+        $_POST['step_id'] = insert('steps', ['flow_id' => $fid, 'position' => $pos, 'delay' => 3600, 'body' => 'Новое сообщение']);   // откроется после редиректа
         flash('Шаг добавлен');
     } else {
         $sid = (int)post('step_id');
@@ -61,33 +61,38 @@ $steps = rows('SELECT * FROM steps WHERE flow_id = ? ORDER BY position', [$fid])
 $stat = [];
 foreach (rows("SELECT ref, COUNT(*) c, COUNT(DISTINCT user_id) u FROM events WHERE type IN ('step_sent','click') GROUP BY ref") as $r) $stat[$r['ref']] = $r;
 ?>
-<p><a href="?p=flows">← Все цепочки</a></p>
-<h1><?= h($flow['name']) ?></h1>
-<div class="card"><h2>Параметры цепочки</h2>
-<form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="save_flow">
+<?= pagehead($flow['name'], '<a class="btn sec" href="?p=flows">← Все цепочки</a>', ($flow['active'] ? 'Активна' : 'Выключена') . ' · бот: ' . bot_label((int)$flow['bot_id']) . ' · источник: ' . ($flow['source'] ?: 'любой') . ($flow['is_default'] ? ' · по умолчанию' : '')) ?>
+<details class="card" <?= isset($_GET['settings']) ? 'open' : '' ?>><summary style="cursor:pointer;font-weight:600;list-style:none"><?= icon('gear') ?> Параметры цепочки <span class="muted" style="font-weight:400">— название, бот, источник, группа</span></summary>
+<form method="post" class="guard"><?= csrf_field() ?><input type="hidden" name="do" value="save_flow">
 <div class="grid3"><div><label>Название</label><input name="name" value="<?= h($flow['name']) ?>"></div>
 <div><label>Бот</label><select name="bot_id"><?= bot_options((int)$flow['bot_id'], 'Все боты') ?></select></div>
-<div><label>Источник (start-параметр)</label><input name="source" value="<?= h($flow['source']) ?>" placeholder="пусто = любой"></div>
-<div><label>При входе добавить в группу</label><select name="group_id"><?= group_options((int)$flow['group_id']) ?></select></div></div>
+<div><label>Источник (start-параметр)</label><input name="source" value="<?= h($flow['source']) ?>" placeholder="пусто = любой"></div></div>
+<div class="grid3"><div><label>При входе добавить в группу</label><select name="group_id"><?= group_options((int)$flow['group_id']) ?></select></div></div>
 <div class="row"><label class="chk"><input type="checkbox" name="active" <?= $flow['active'] ? 'checked' : '' ?>> Активна</label>
-<label class="chk"><input type="checkbox" name="is_default" <?= $flow['is_default'] ? 'checked' : '' ?>> По умолчанию (для пользователей без подходящего источника)</label></div>
-<?php if ($flow['source']): foreach (rows('SELECT username FROM bots WHERE username <> \'\' AND (? = 0 OR id = ?)', [$flow['bot_id'], $flow['bot_id']]) as $bb): ?><p class="muted">Ссылка: <code data-copy>https://t.me/<?= h($bb['username']) ?>?start=<?= h($flow['source']) ?></code></p><?php endforeach; endif; ?>
-<button class="btn">Сохранить</button></form></div>
+<label class="chk"><input type="checkbox" name="is_default" <?= $flow['is_default'] ? 'checked' : '' ?>> По умолчанию (для подписчиков без подходящего источника)</label></div>
+<?php if ($flow['source']): foreach (rows('SELECT username FROM bots WHERE username <> \'\' AND (? = 0 OR id = ?)', [$flow['bot_id'], $flow['bot_id']]) as $bb): ?><p class="hint">Ссылка: <code data-copy>https://t.me/<?= h($bb['username']) ?>?start=<?= h($flow['source']) ?></code> (клик — скопировать)</p><?php endforeach; endif; ?>
+<p><button class="btn" data-save>Сохранить параметры</button></p></form></details>
 
-<?php foreach ($steps as $i => $s): [$dv, $du] = split_delay((int)$s['delay']); $st = $stat['s' . $s['id']] ?? null; ?>
-<form method="post" class="card step" id="s<?= $s['id'] ?>"><?= csrf_field() ?><input type="hidden" name="step_id" value="<?= $s['id'] ?>">
-<div class="row" style="margin-bottom:8px"><h2 style="margin:0">Шаг <?= $i + 1 ?></h2>
-<span class="muted">отправлено: <?= (int)($st['c'] ?? 0) ?></span><span class="sp"></span>
-<button class="btn sm sec" name="do" value="step_up" <?= $i === 0 ? 'disabled' : '' ?>>↑</button><button class="btn sm sec" name="do" value="step_down" <?= $i === count($steps) - 1 ? 'disabled' : '' ?>>↓</button>
-<button class="btn sm red" name="do" value="step_del" data-confirm="Удалить шаг?">Удалить</button></div>
-<div class="row"><label style="margin:0">Отправить через</label><input type="number" min="0" name="delay_val" value="<?= $dv ?>" style="width:90px">
-<select name="delay_unit" style="width:auto"><?php foreach ($units as $k => $u) echo '<option value="' . $k . '"' . ($k === $du ? ' selected' : '') . '>' . $u[1] . '</option>'; ?></select>
-<span class="muted"><?= $i === 0 ? 'после входа пользователя в цепочку' : 'после предыдущего сообщения' ?></span>
-<span class="sp"></span><label style="margin:0">Затем добавить в группу</label><select name="group_id" style="width:auto"><?= group_options((int)$s['group_id']) ?></select></div>
-<div style="margin-top:12px"><?= msg_editor($s) ?></div>
+<div class="timeline">
+<?php foreach ($steps as $i => $s): [$dv, $du] = split_delay((int)$s['delay']); $st = $stat['s' . $s['id']] ?? null;
+  $preview = trim(preg_replace('/\s+/u', ' ', html_to_plain(md_to_html((string)$s['body'])))) ?: ($s['image'] ? '(картинка)' : '(пусто)');
+  $nb = count(flat_buttons($s)); ?>
+<div class="gap"><?= icon('check') ?> <?= $i === 0 ? ($s['delay'] ? 'через ' . h(human_delay((int)$s['delay'])) . ' после /start' : 'сразу после /start') : 'через ' . h(human_delay((int)$s['delay'])) . ' после предыдущего' ?></div>
+<details class="card step" id="s<?= $s['id'] ?>" <?= count($steps) <= 2 ? 'open' : '' ?>>
+<summary><span class="stepno"><?= $i + 1 ?></span><span class="steptxt"><b><?= h(mb_substr($preview, 0, 90)) ?></b>
+<small><?= $nb ? $nb . ' ' . ($nb === 1 ? 'кнопка' : 'кнопок') . ' · ' : '' ?><?= $s['image'] ? 'с картинкой · ' : '' ?>отправлено: <?= (int)($st['c'] ?? 0) ?></small></span><span class="chev"><?= icon('chev') ?></span></summary>
+<form method="post" class="stepbody guard"><?= csrf_field() ?><input type="hidden" name="step_id" value="<?= $s['id'] ?>">
+<div class="row" style="margin:12px 0 4px"><label style="margin:0">Отправить через</label><input type="number" min="0" name="delay_val" value="<?= $dv ?>" style="width:90px" aria-label="Задержка">
+<select name="delay_unit" style="width:auto" aria-label="Единица"><?php foreach ($units as $k => $u) echo '<option value="' . $k . '"' . ($k === $du ? ' selected' : '') . '>' . $u[1] . '</option>'; ?></select>
+<span class="muted"><?= $i === 0 ? 'после входа подписчика в цепочку' : 'после предыдущего сообщения' ?></span>
+<span class="sp"></span><label style="margin:0">Затем в группу</label><select name="group_id" style="width:auto"><?= group_options((int)$s['group_id'], '— не добавлять —') ?></select></div>
+<div style="margin-top:10px"><?= msg_editor($s) ?></div>
 <?php
  $clicks = array_filter($stat, fn($r, $k) => str_starts_with($k, 's' . $s['id'] . ':'), ARRAY_FILTER_USE_BOTH);
  if ($clicks): ?><p class="muted">Клики: <?php foreach ($clicks as $k => $r) echo '#' . (explode(':', $k)[1] + 1) . ' — ' . $r['c'] . ' (' . $r['u'] . ' польз.) &nbsp; '; ?></p><?php endif; ?>
-<div class="row" style="margin-top:10px"><button class="btn" name="do" value="step_save">Сохранить шаг</button><button class="btn sec" name="do" value="step_test">Сохранить и отправить тест мне</button></div></form>
+<div class="row sticky-actions"><button class="btn" name="do" value="step_save" data-save>Сохранить шаг</button><button class="btn sec" name="do" value="step_test" title="Сохранит шаг и пришлёт сообщение вам в Telegram">Сохранить и отправить тест мне</button><span class="sp"></span>
+<button class="btn sm sec" name="do" value="step_up" <?= $i === 0 ? 'disabled' : '' ?> aria-label="Выше" title="Переместить выше">↑</button><button class="btn sm sec" name="do" value="step_down" <?= $i === count($steps) - 1 ? 'disabled' : '' ?> aria-label="Ниже" title="Переместить ниже">↓</button>
+<button class="btn sm sec danger" name="do" value="step_del" data-confirm="Шаг <?= $i + 1 ?> будет удалён.">Удалить</button></div></form></details>
 <?php endforeach; ?>
-<form method="post"><?= csrf_field() ?><button class="btn" name="do" value="step_add">+ Добавить шаг</button></form>
+</div>
+<form method="post"><?= csrf_field() ?><button class="btn sec" name="do" value="step_add"><?= icon('plus') ?> Добавить шаг</button></form>

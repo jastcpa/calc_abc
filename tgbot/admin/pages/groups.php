@@ -25,14 +25,14 @@ if (is_post()) {
 }
 $list = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug' . (bot_scope() === null ? '' : ' JOIN users uu ON uu.id = ug.user_id' . scope_sql('uu.bot_id')) . ' WHERE ug.group_id = g.id) AS cnt FROM groups g ORDER BY g.name');
 ?>
-<h1>Группы пользователей</h1>
+<?= pagehead('Группы', '', 'Группы общие для всех ботов. Подписчики попадают в них автоматически (вход в цепочку, шаг, клик по кнопке, внешний постбек) или вручную из раздела «Подписчики». Группы выбираются при настройке рассылки.') ?>
 <div class="card"><form method="post" class="row"><?= csrf_field() ?><input type="hidden" name="do" value="add">
 <input name="name" placeholder="Название новой группы" style="min-width:260px"><input type="color" name="color" value="#3b82f6" style="width:50px;padding:2px">
 <button class="btn">Создать</button></form>
-<p class="muted">Пользователи попадают в группы: автоматически (вход в цепочку, шаг цепочки, клик по кнопке, внешний постбек) или вручную из раздела «Пользователи». Группы выбираются при настройке рассылки.</p></div>
+</div>
 <div class="card">
 <?php foreach ($list as $g): ?><form method="post" class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><?= csrf_field() ?><input type="hidden" name="id" value="<?= $g['id'] ?>">
 <input type="color" name="color" value="<?= h($g['color']) ?>" style="width:44px;padding:2px"><input name="name" value="<?= h($g['name']) ?>" style="min-width:240px">
 <a href="?p=users&group=<?= $g['id'] ?>" style="min-width:110px"><?= (int)$g['cnt'] ?> польз.</a>
 <button class="btn sm" name="do" value="edit">Сохранить</button><button class="btn sm red" name="do" value="delete" data-confirm="Удалить группу? Участники останутся, но выйдут из группы.">Удалить</button></form>
-<?php endforeach; if (!$list): ?><p class="muted">Групп пока нет</p><?php endif; ?></div>
+<?php endforeach; if (!$list): ?><?= empty_state('tag', 'Групп пока нет', 'Создайте первую группу, например «Купили» или «Прогрев».') ?><?php endif; ?></div>

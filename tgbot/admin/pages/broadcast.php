@@ -66,10 +66,11 @@ if (is_post()) {
 $inc = array_map('intval', json_arr($b['inc_groups'])); $exc = array_map('intval', json_arr($b['exc_groups']));
 $groups = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug JOIN users uu ON uu.id = ug.user_id WHERE ug.group_id = g.id' . scope_sql('uu.bot_id') . ((int)$b['bot_id'] ? ' AND uu.bot_id = ' . (int)$b['bot_id'] : '') . ') cnt FROM groups g ORDER BY name');
 $recipients = bc_count($b);
+$groups_by_id = array_column($groups, 'name', 'id');
 $sl = ['draft' => 'черновик', 'scheduled' => 'запланирована', 'sending' => 'отправляется', 'done' => 'завершена', 'cancelled' => 'отменена'];
 ?>
-<p><a href="?p=broadcasts">← Все рассылки</a></p>
-<h1><?= h($b['name']) ?> <span class="badge"><?= $sl[$b['status']] ?></span></h1>
+<?php $bcolor = ['draft' => '', 'scheduled' => 'y', 'sending' => 'y', 'done' => 'g', 'cancelled' => 'r'][$b['status']]; ?>
+<?= pagehead($b['name'], '<span class="badge ' . $bcolor . '">' . $sl[$b['status']] . '</span><a class="btn sec" href="?p=broadcasts">← Все рассылки</a>', 'Бот: ' . bot_label((int)$b['bot_id']) . ($b['send_at'] && $b['status'] !== 'draft' ? ' · отправка: ' . fmt_dt((int)$b['send_at']) : '')) ?>
 
 <?php if (!$editable): ?>
 <div class="card"><h2>Статистика</h2>
@@ -80,7 +81,7 @@ $sl = ['draft' => 'черновик', 'scheduled' => 'запланирована
 <div class="cards"><div class="kpi"><b><?= $b['total'] ?></b><span>получателей</span></div><div class="kpi"><b><?= $b['sent'] ?></b><span>доставлено</span></div>
 <div class="kpi"><b><?= $b['failed'] ?></b><span>ошибок</span></div><div class="kpi"><b><?= $skipped ?></b><span>пропущено</span></div>
 <div class="kpi"><b><?= array_sum(array_column($ck, 'u')) ?></b><span>кликов (уник.)</span></div></div>
-<?php if ($ck): ?><table><tr><th>Кнопка</th><th>Кликов</th><th>Уникальных</th></tr><?php foreach ($ck as $r) echo '<tr><td>' . h($r['label']) . '</td><td>' . $r['c'] . '</td><td>' . $r['u'] . '</td></tr>'; ?></table><?php endif; ?>
+<?php if ($ck): ?><div class="table-wrap"><table><tr><th>Кнопка</th><th>Кликов</th><th>Уникальных</th></tr><?php foreach ($ck as $r) echo '<tr><td>' . h($r['label']) . '</td><td>' . $r['c'] . '</td><td>' . $r['u'] . '</td></tr>'; ?></table><?php endif; ?>
 <p class="muted">Начало: <?= fmt_dt((int)$b['started_at']) ?> · Конец: <?= fmt_dt((int)$b['finished_at']) ?></p>
 <form method="post" class="row"><?= csrf_field() ?>
 <?php if ($b['status'] === 'sending'): ?><button class="btn" name="do" value="tick">Продолжить отправку сейчас</button><button class="btn red" name="do" value="cancel" data-confirm="Остановить рассылку?">Остановить</button><?php endif; ?>
@@ -88,9 +89,13 @@ $sl = ['draft' => 'черновик', 'scheduled' => 'запланирована
 <?php if ($b['status'] !== 'sending'): ?><button class="btn sec" name="do" value="delete" data-confirm="Удалить рассылку?">Удалить</button><?php endif; ?></form></div>
 <div class="card"><h2>Текст</h2><div class="tgbg"><div class="bubble"><?= apply_vars(md_to_html($b['body']), ['first_name' => 'Иван']) ?></div></div></div>
 <?php else: ?>
-<form method="post"><?= csrf_field() ?>
-<div class="card"><label>Название (для вас)</label><input name="name" value="<?= h($b['name']) ?>"><div style="margin-top:12px"><?= msg_editor($b) ?></div></div>
-<div class="card"><h2>Кому отправлять</h2>
+<?php
+ $incN = array_map(fn($i) => $groups_by_id[$i] ?? '?', $inc);
+ $confirmText = $recipients . ' подписчикам' . ($incN ? ' (группы: ' . implode(', ', $incN) . ')' : '') . ' — рассылка уйдёт сразу, отменить отправленное будет нельзя.';
+?>
+<form method="post" class="guard" data-send-confirm="<?= h($confirmText) ?>"><?= csrf_field() ?>
+<div class="card"><h2><span class="badge">1</span> Сообщение</h2><label>Название (видно только вам)</label><input name="name" value="<?= h($b['name']) ?>"><div style="margin-top:12px"><?= msg_editor($b) ?></div></div>
+<div class="card"><h2><span class="badge">2</span> Аудитория</h2>
 <label>Бот</label><select name="bot_id" style="max-width:360px"><?= bot_options((int)$b['bot_id'], 'Все боты (каждому — через его бота)') ?></select>
 <p class="muted">Получатели — активные пользователи выбранного бота (или всех ботов), не заблокировавшие бота. Если группы не выбраны — всем. Группы общие для всех ботов.</p>
 <div class="grid2"><div><b>Только участникам групп (любой из):</b>
@@ -98,13 +103,15 @@ $sl = ['draft' => 'черновик', 'scheduled' => 'запланирована
 <div><b>Исключить участников групп:</b>
 <?php foreach ($groups as $g): ?><label class="chk"><input type="checkbox" name="exc[]" value="<?= $g['id'] ?>" <?= in_array((int)$g['id'], $exc, true) ? 'checked' : '' ?>> <?= group_tag($g) ?></label><?php endforeach; ?></div></div>
 <p>Сейчас под условия подходит: <b><?= $recipients ?></b> польз. <span class="muted">(пересчитается после сохранения)</span></p></div>
-<div class="card"><h2>Когда отправить</h2>
-<label class="chk"><input type="radio" name="mode" value="draft" <?= $b['status'] === 'draft' ? 'checked' : '' ?>> Сохранить как черновик</label>
-<label class="chk"><input type="radio" name="mode" value="schedule" <?= $b['status'] === 'scheduled' ? 'checked' : '' ?>> Запланировать на:
-<input type="datetime-local" name="send_at" value="<?= h(local_input($b['send_at'] ? (int)$b['send_at'] : null)) ?>" style="width:auto"> <span class="muted">(время по поясу <?= h(setting('tz', 'Europe/Moscow')) ?>, сейчас <?= fmt_dt(now()) ?>)</span></label>
+<div class="card"><h2><span class="badge">3</span> Отправка</h2>
+<label class="chk"><input type="radio" name="mode" value="draft" <?= $b['status'] === 'draft' ? 'checked' : '' ?>> Только сохранить как черновик</label>
+<label class="chk"><input type="radio" name="mode" value="schedule" <?= $b['status'] === 'scheduled' ? 'checked' : '' ?>> Запланировать на
+<input type="datetime-local" name="send_at" value="<?= h(local_input($b['send_at'] ? (int)$b['send_at'] : null)) ?>" style="width:auto" aria-label="Дата и время"> <span class="muted">(пояс <?= h(setting('tz', 'Europe/Moscow')) ?>, сейчас <?= fmt_dt(now()) ?>)</span></label>
 <label class="chk"><input type="radio" name="mode" value="now"> Отправить сейчас</label>
-<div class="row" style="margin-top:10px"><button class="btn" name="do" value="save">Применить</button><button class="btn sec" name="do" value="test">Отправить тест мне</button>
-<?php if ($b['status'] === 'scheduled'): ?><button class="btn sec" name="do" value="cancel">Снять с планирования</button><?php endif; ?>
-<button class="btn sec" name="do" value="delete" data-confirm="Удалить рассылку?">Удалить</button></div></div>
+<?php if (!setting('admin_tg_id')): ?><p class="hint">Совет: чтобы проверять рассылку «Отправить тест мне», укажите свой Telegram ID в <a href="?p=settings">настройках</a>.</p><?php endif; ?>
+<div class="row sticky-actions" data-modes='<?= h(json_encode(['draft' => 'Сохранить черновик', 'schedule' => 'Запланировать', 'now' => 'Отправить сейчас'], JSON_UNESCAPED_UNICODE)) ?>'>
+<button class="btn" name="do" value="save" data-save data-mode-label>Применить</button><button class="btn sec" name="do" value="test">Отправить тест мне</button>
+<?php if ($b['status'] === 'scheduled'): ?><button class="btn sec" name="do" value="cancel">Снять с планирования</button><?php endif; ?><span class="sp"></span>
+<button class="btn sec danger" name="do" value="delete" data-confirm="Рассылка «<?= h($b['name']) ?>» будет удалена.">Удалить</button></div></div>
 </form>
 <?php endif; ?>

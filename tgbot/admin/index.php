@@ -73,8 +73,18 @@ $pages = [
     'team' => ['Команда', '🧑‍💼', null, null, true, true], 'roles' => ['Роли и права', '🛡', null, null, true, true],
     'settings' => ['Настройки', '⚙️', null, null, true, true],
     'profile' => ['Мой профиль', '👤', null, null, false],
-    'preview' => ['', '', null, null, false], 'logout' => ['', '', null, null, false],
+    'preview' => ['', '', null, null, false], 'logout' => ['', '', null, null, false], 'ctx' => ['', '', null, null, false],
 ];
+
+// группы меню (порядок = частота использования; админские разделы свёрнуты в конце)
+$navGroups = [
+    'Обзор' => ['dashboard'],
+    'Аудитория' => ['users', 'groups', 'links'],
+    'Коммуникации' => ['flows', 'broadcasts'],
+    'Интеграции' => ['postbacks'],
+    'Администрирование' => ['bots', 'team', 'roles', 'settings'],
+];
+$navIcons = ['dashboard' => 'dashboard', 'users' => 'users', 'groups' => 'tag', 'links' => 'compass', 'flows' => 'flows', 'broadcasts' => 'send', 'postbacks' => 'repeat', 'bots' => 'bot', 'team' => 'team', 'roles' => 'shield', 'settings' => 'gear'];
 $p = $_GET['p'] ?? '';
 if ($p === '') {
     foreach ($pages as $k => $v) if ($v[4] && page_allowed($v)) { $p = $k; break; }
@@ -86,6 +96,16 @@ if (!array_key_exists($p, $pages)) $p = 'profile';
 if ($p === 'logout') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') { audit('logout'); session_destroy(); }
     header('Location: index.php'); exit;
+}
+
+if ($p === 'ctx') {   // переключатель бота: хранится в сессии, применяется ко всем спискам
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $b = (int)($_POST['bot'] ?? 0);
+        $_SESSION['bot_ctx'] = ($b > 0 && bot_ok($b) && bot_get_fresh($b)) ? $b : 0;
+    }
+    $back = (string)($_POST['back'] ?? '');
+    header('Location: ' . (preg_match('/^\?p=[a-z]+(&[A-Za-z0-9_%=.\-\[\]]*)?$/', $back) ? $back : 'index.php'));
+    exit;
 }
 
 if ($p === 'preview') {
@@ -113,19 +133,57 @@ $content = ob_get_clean();
 
 $activeNav = ['user' => 'users', 'flow' => 'flows', 'broadcast' => 'broadcasts'][$p] ?? $p;
 $gjson = json_encode(rows('SELECT id, name FROM groups ORDER BY name'), JSON_UNESCAPED_UNICODE);
+$visBots = visible_bots();
+$ctxBot = ctx_bot();
 
 function page_allowed(array $v): bool
 {
     [, , $view, , , $adm, $unr] = array_pad($v, 7, false);
     return !($adm && !is_admin()) && !($view && !can($view)) && !($unr && !unrestricted());
 }
+
+// хлебные крошки: Группа меню / Раздел / (страница)
+$crumbs = [];
+foreach ($navGroups as $gn => $keys) if (in_array($activeNav, $keys, true)) $crumbs[] = [$gn, null];
+if (isset($pages[$activeNav]) && $pages[$activeNav][0] !== '') $crumbs[] = [$pages[$activeNav][0], $activeNav !== $p ? '?p=' . $activeNav : null];
+if ($activeNav !== $p && $title !== '') $crumbs[] = [$title, null];
+if ($p === 'profile') $crumbs = [['Мой профиль', null]];
+
+// команды палитры (Ctrl+K)
+$cmds = [];
+foreach ($navGroups as $gn => $keys) foreach ($keys as $k) if (page_allowed($pages[$k])) $cmds[] = ['t' => $pages[$k][0], 'g' => $gn, 'u' => '?p=' . $k];
+if (can('broadcasts.edit') && page_allowed($pages['broadcasts'])) $cmds[] = ['t' => 'Создать рассылку', 'g' => 'Действие', 'u' => '?p=broadcasts#new'];
+if (can('flows.edit') && page_allowed($pages['flows'])) $cmds[] = ['t' => 'Создать цепочку', 'g' => 'Действие', 'u' => '?p=flows#new'];
+if (is_admin()) { $cmds[] = ['t' => 'Подключить бота', 'g' => 'Действие', 'u' => '?p=bots']; $cmds[] = ['t' => 'Добавить пользователя админки', 'g' => 'Действие', 'u' => '?p=team&edit=new']; }
+$cmds[] = ['t' => 'Мой профиль', 'g' => 'Аккаунт', 'u' => '?p=profile'];
 ?><!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf" content="<?= h($csrf) ?>"><meta name="groups" content="<?= h($gjson) ?>"><meta name="ro" content="<?= $readOnly ? '1' : '0' ?>">
-<title><?= h($title ?: ($pages[$activeNav][0] ?? 'Админка')) ?> — Бот</title><link rel="stylesheet" href="assets/app.css"></head><body>
-<div class="layout"><nav class="side"><h2>🤖 Telegram-боты</h2>
-<?php foreach ($pages as $k => $v) if ($v[4] && page_allowed($v)): ?><a href="?p=<?= $k ?>" class="<?= $k === $activeNav ? 'on' : '' ?>"><?= $v[1] ?> <?= h($v[0]) ?></a><?php endif; ?>
-<div class="out"><a href="?p=profile" class="<?= $p === 'profile' ? 'on' : '' ?>">👤 <?= h($ME['name'] ?: $ME['login']) ?><br><small><?= h($ME['role_name']) ?></small></a>
-<form method="post" action="?p=logout"><?= csrf_field() ?><button class="linkbtn">⎋ Выйти</button></form></div></nav>
-<main class="main"><?php foreach (flashes() as [$t, $m]): ?><div class="flash <?= $t ?>"><?= h($m) ?></div><?php endforeach; ?>
-<?php if ($readOnly): ?><div class="flash ro-note">👁 Режим просмотра: у вашей роли нет права редактирования этого раздела.</div><?php endif; ?>
-<?= $content ?></main></div><script src="assets/app.js"></script></body></html>
+<meta name="cmds" content="<?= h(json_encode($cmds, JSON_UNESCAPED_UNICODE)) ?>"><meta name="usersearch" content="<?= can('users.view') ? '1' : '0' ?>">
+<title><?= h(($title ?: ($pages[$activeNav][0] ?? 'Админка')) . ' — Telegram-боты') ?></title><link rel="stylesheet" href="assets/app.css"></head><body>
+<a class="skip" href="#main">К содержимому</a>
+<div class="app"><aside class="side" id="side" aria-label="Основное меню">
+<div class="brand"><span class="logo"><?= icon('send') ?></span> Telegram-боты</div>
+<nav class="nav"><?php foreach ($navGroups as $gn => $keys):
+    $items = array_filter($keys, fn($k) => page_allowed($pages[$k]));
+    if (!$items) continue;
+    $open = in_array($activeNav, $keys, true) || $gn !== 'Администрирование'; ?>
+  <details data-grp="<?= h($gn) ?>" <?= $open ? 'open' : '' ?>><summary><?= h($gn) ?><?= icon('chev') ?></summary>
+  <?php foreach ($items as $k): ?><a href="?p=<?= $k ?>" <?= $k === $activeNav ? 'aria-current="page"' : '' ?>><?= icon($navIcons[$k]) ?> <?= h($pages[$k][0]) ?></a><?php endforeach; ?></details>
+<?php endforeach; ?></nav>
+<div class="me"><a href="?p=profile" <?= $p === 'profile' ? 'aria-current="page"' : '' ?>><span class="avatar"><?= h(initials($ME['name'] ?: $ME['login'])) ?></span><span class="who"><b><?= h($ME['name'] ?: $ME['login']) ?></b><small><?= h($ME['role_name']) ?></small></span></a>
+<form method="post" action="?p=logout"><?= csrf_field() ?><button><?= icon('logout') ?> Выйти</button></form></div></aside>
+<div class="scrim" id="scrim"></div>
+<div class="content"><header class="top">
+<button class="iconbtn" id="navtoggle" aria-label="Меню" aria-controls="side"><?= icon('menu') ?></button>
+<nav class="crumbs" aria-label="Путь"><?php foreach ($crumbs as $i => [$ct, $cu]): if ($i) echo '<span>/</span>'; echo $cu ? '<a href="' . h($cu) . '">' . h($ct) . '</a>' : ($i === count($crumbs) - 1 ? '<b>' . h($ct) . '</b>' : '<span>' . h($ct) . '</span>'); endforeach; ?></nav>
+<span class="sp"></span>
+<?php if (count($visBots) > 1 || ($visBots && unrestricted())): ?><form method="post" action="?p=ctx" class="botctx" title="Показывать данные выбранного бота во всех разделах"><?= csrf_field() ?><input type="hidden" name="back" value="<?= h('?' . http_build_query(array_diff_key($_GET, ['bot' => 1, 'page' => 1]))) ?>">
+<span><?= icon('bot') ?></span><select name="bot" aria-label="Бот" data-autosubmit><?= bot_options($ctxBot, unrestricted() ? 'Все боты' : 'Все мои боты') ?></select></form><?php endif; ?>
+<button class="iconbtn" id="palbtn" aria-label="Поиск и команды"><?= icon('search') ?> <span>Поиск</span> <kbd>Ctrl K</kbd></button></header>
+<main class="main" id="main">
+<div class="toasts" role="status" aria-live="polite"><?php foreach (flashes() as [$t, $m]): ?><div class="toast <?= $t === 'err' ? 'err' : '' ?>"><span><?= h($m) ?></span><button type="button" aria-label="Закрыть">×</button></div><?php endforeach; ?></div>
+<?php if ($readOnly): ?><div class="notice"><?= icon('shield') ?> Режим просмотра: у вашей роли нет права редактирования этого раздела.</div><?php endif; ?>
+<?= $content ?></main></div></div>
+<dialog id="confirm"><form method="dialog" class="dlg"><h2 id="cf-title">Подтвердите действие</h2><p id="cf-text" class="muted"></p><div class="row"><button class="btn sec" value="cancel">Отмена</button><button class="btn" id="cf-ok" value="ok">Подтвердить</button></div></form></dialog>
+<dialog id="palette"><input id="pal-q" placeholder="Раздел, действие или имя подписчика…" autocomplete="off" aria-label="Поиск"><ul id="pal-list" role="listbox"></ul><div class="pal-foot">↑↓ выбор · Enter открыть · Esc закрыть</div></dialog>
+<script src="assets/app.js"></script></body></html>

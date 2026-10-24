@@ -44,9 +44,9 @@ if (is_post()) {
 $list = rows('SELECT b.*, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id) users, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id AND u.status = \'blocked\') blocked,
   (SELECT COUNT(*) FROM flows f WHERE f.bot_id = b.id) flows FROM bots b ORDER BY b.id');
 ?>
-<h1>Боты</h1>
+<?= pagehead('Боты', '', 'Любое количество ботов. Подписчики, цепочки и рассылки привязаны к боту; группы — общие.') ?>
 <div class="card"><h2>Подключить бота</h2>
-<p class="muted">Можно подключить любое количество ботов. Пользователи, цепочки и рассылки привязываются к боту; группы — общие для всех ботов. Токен выдаёт @BotFather.</p>
+<p class="hint" style="margin:0 0 10px">Токен выдаёт @BotFather (<code>/newbot</code>). Webhook установится автоматически — нужен HTTPS.</p>
 <form method="post" class="row"><?= csrf_field() ?><input type="hidden" name="do" value="add">
 <input name="token" placeholder="123456:ABC-DEF..." style="min-width:340px" autocomplete="off"><input name="name" placeholder="Название (необязательно)" style="min-width:200px"><button class="btn">Подключить</button></form></div>
 <div class="card"><?php foreach ($list as $b): ?>
@@ -59,4 +59,4 @@ $list = rows('SELECT b.*, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id) u
 <button class="btn sm sec" name="do" value="webhook">Установить webhook</button><button class="btn sm sec" name="do" value="check">Проверить</button>
 <button class="btn sm sec" name="do" value="toggle"><?= $b['active'] ? 'Отключить' : 'Включить' ?></button>
 <button class="btn sm red" name="do" value="delete" data-confirm="Удалить бота? Возможно только если у него нет пользователей.">Удалить</button></form></div>
-<?php endforeach; if (!$list) echo '<p class="muted">Ботов пока нет — подключите первого выше.</p>'; ?></div>
+<?php endforeach; if (!$list) echo empty_state('bot', 'Ботов пока нет', 'Подключите первого бота по токену выше.'); ?></div>

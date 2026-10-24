@@ -91,15 +91,14 @@ foreach (rows('SELECT admin_id, bot_id FROM admin_user_bots') as $r) $ub[$r['adm
 $bn = array_column($bots, null, 'id');
 $cnt = array_column(rows('SELECT role_id, COUNT(*) c FROM admin_users GROUP BY role_id'), 'c', 'role_id');
 ?>
-<div class="row"><h1 style="margin:0">Команда</h1><span class="sp"></span><a class="btn" href="?p=team&edit=new">+ Пользователь</a><a class="btn sec" href="?p=roles">Роли и права</a></div>
-<p class="muted" style="margin-top:8px">Доступ к админке. Править пользователей, роли, ботов и настройки может только администратор.</p>
+<?= pagehead('Команда', '<a class="btn" href="?p=team&edit=new">' . icon('plus') . ' Пользователь</a><a class="btn sec" href="?p=roles">Роли и права</a>', 'Доступ к админке. Править пользователей, роли, ботов и настройки может только администратор.') ?>
 <div class="row" style="margin:12px 0"><a class="btn sm <?= $fr ? 'sec' : '' ?>" href="?p=team">Все (<?= array_sum($cnt) ?>)</a>
 <?php foreach ($roles as $r): ?><a class="btn sm <?= $fr === (int)$r['id'] ? '' : 'sec' ?>" href="?p=team&role=<?= $r['id'] ?>"><?= h($r['name']) ?> (<?= (int)($cnt[$r['id']] ?? 0) ?>)</a><?php endforeach; ?></div>
-<div class="card"><table><tr><th>Пользователь</th><th>Роль</th><th>Доступ к ботам</th><th>Статус</th><th>Последний вход</th><th></th></tr>
+<div class="card"><div class="table-wrap"><table><tr><th>Пользователь</th><th>Роль</th><th>Доступ к ботам</th><th>Статус</th><th>Последний вход</th><th></th></tr>
 <?php foreach ($list as $a): ?><tr><td><b><?= h($a['login']) ?></b><br><span class="muted"><?= h($a['name']) ?></span></td>
 <td><span class="badge <?= $a['is_admin'] ? 'r' : '' ?>"><?= h($a['role_name']) ?></span></td>
 <td><?= $a['all_bots'] || $a['is_admin'] ? 'все боты' : h(implode(', ', array_map(fn($b) => isset($bn[$b]) ? ($bn[$b]['username'] ? '@' . $bn[$b]['username'] : $bn[$b]['name']) : '?', $ub[$a['id']] ?? [])) ?: '— нет —') ?></td>
 <td><?= $a['active'] ? '<span class="badge g">активен</span>' : '<span class="badge y">отключён</span>' ?></td><td><?= fmt_dt((int)$a['last_login']) ?></td>
-<td><a class="btn sm sec" href="?p=team&edit=<?= $a['id'] ?>">Изменить</a></td></tr><?php endforeach; ?></table></div>
+<td><a class="btn sm sec" href="?p=team&edit=<?= $a['id'] ?>">Изменить</a></td></tr><?php endforeach; ?></table></div></div>
 <?php $log = rows('SELECT au.*, a.login FROM audit au LEFT JOIN admin_users a ON a.id = au.admin_id ORDER BY au.id DESC LIMIT 30'); ?>
-<div class="card"><h2>Журнал действий</h2><table><?php foreach ($log as $l): ?><tr><td style="white-space:nowrap"><?= fmt_dt((int)$l['at'], 'd.m H:i:s') ?></td><td><?= h($l['login'] ?? '—') ?></td><td><code><?= h($l['action']) ?></code></td><td class="muted"><?= h($l['detail']) ?></td><td class="muted"><?= h($l['ip']) ?></td></tr><?php endforeach; if (!$log) echo '<tr><td class="muted">Пусто</td></tr>'; ?></table></div>
+<div class="card"><h2>Журнал действий</h2><div class="table-wrap"><table><?php foreach ($log as $l): ?><tr><td style="white-space:nowrap"><?= fmt_dt((int)$l['at'], 'd.m H:i:s') ?></td><td><?= h($l['login'] ?? '—') ?></td><td><code><?= h($l['action']) ?></code></td><td class="muted"><?= h($l['detail']) ?></td><td class="muted"><?= h($l['ip']) ?></td></tr><?php endforeach; if (!$log) echo '<tr><td class="muted">Пусто</td></tr>'; ?></table></div></div>
