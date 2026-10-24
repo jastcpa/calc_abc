@@ -356,7 +356,9 @@ $mockLog = $tmp . '/mock.log';
 $env = ['TGBOT_CONFIG' => $cfgFile, 'TG_MOCK_LOG' => $mockLog, 'PATH' => getenv('PATH')];
 $srv = proc_open([PHP_BINARY, '-S', "127.0.0.1:$port", '-t', dirname(__DIR__)], [1 => ['file', $tmp . '/srv.log', 'w'], 2 => ['file', $tmp . '/srv.log', 'a']], $p1, null, $env);
 $mock = proc_open([PHP_BINARY, '-S', "127.0.0.1:$mport", __DIR__ . '/mock_tg.php'], [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $p2, null, $env);
-usleep(700000);
+foreach ([$port, $mport] as $pt) {   // ждём, пока серверы начнут отвечать
+    for ($i = 0; $i < 50; $i++) { $c = @fsockopen('127.0.0.1', $pt, $en, $es, 0.2); if ($c) { fclose($c); break; } usleep(100000); }
+}
 $GLOBALS['TG_TRANSPORT_BACKUP'] = $GLOBALS['TG_TRANSPORT'];
 
 set_setting('api_base', "http://127.0.0.1:$mport");
