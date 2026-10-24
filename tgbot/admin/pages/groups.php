@@ -2,6 +2,8 @@
 $title = 'Группы';
 if (is_post()) {
     $do = post('do');
+    need('groups.edit');
+    if (in_array($do, ['edit', 'delete'], true) && !unrestricted()) { flash('Переименование и удаление групп доступны только при доступе ко всем ботам', 'err'); redirect('?p=groups'); }
     if ($do === 'add') {
         $name = mb_substr(post('name'), 0, 60);
         if ($name === '') flash('Введите название', 'err');
@@ -21,7 +23,7 @@ if (is_post()) {
     }
     redirect('?p=groups');
 }
-$list = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id) AS cnt FROM groups g ORDER BY g.name');
+$list = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug' . (bot_scope() === null ? '' : ' JOIN users uu ON uu.id = ug.user_id' . scope_sql('uu.bot_id')) . ' WHERE ug.group_id = g.id) AS cnt FROM groups g ORDER BY g.name');
 ?>
 <h1>Группы пользователей</h1>
 <div class="card"><form method="post" class="row"><?= csrf_field() ?><input type="hidden" name="do" value="add">

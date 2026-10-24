@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS bots (
   secret TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, last_update INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admin_roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT NOT NULL DEFAULT '',
+  perms TEXT NOT NULL DEFAULT '[]', is_admin INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT UNIQUE NOT NULL, name TEXT NOT NULL DEFAULT '', pass_hash TEXT NOT NULL,
+  role_id INTEGER NOT NULL, all_bots INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+  sess_ver INTEGER NOT NULL DEFAULT 1, last_login INTEGER, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_user_bots (admin_id INTEGER NOT NULL, bot_id INTEGER NOT NULL, PRIMARY KEY (admin_id, bot_id));
+CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, action TEXT NOT NULL, detail TEXT, ip TEXT, at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS login_fail (ip TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS lf_ip ON login_fail(ip, at);
 CREATE TABLE IF NOT EXISTS users (
@@ -164,6 +177,12 @@ SQL;
     if ((int)val('SELECT COUNT(*) FROM bots') === 0 && ($tok = val("SELECT v FROM settings WHERE k = 'bot_token'"))) {
         $bot = insert('bots', ['name' => 'Основной бот', 'token' => $tok, 'username' => val("SELECT v FROM settings WHERE k = 'bot_username'"),
             'secret' => (string)(val("SELECT v FROM settings WHERE k = 'webhook_secret'") ?: rand_token(24)), 'active' => 1, 'created_at' => now()]);
+    }
+    // апгрейд: единственный админ из настроек → пользователь админки с ролью «Администратор»
+    $adminRole = seed_roles();
+    if ((int)val('SELECT COUNT(*) FROM admin_users') === 0 && ($lg = val("SELECT v FROM settings WHERE k = 'admin_login'"))) {
+        insert('admin_users', ['login' => $lg, 'name' => 'Администратор', 'pass_hash' => (string)val("SELECT v FROM settings WHERE k = 'admin_hash'"),
+            'role_id' => $adminRole, 'all_bots' => 1, 'active' => 1, 'created_at' => now()]);
     }
     if ($legacyUsers) {
         $bid = $bot ?: (int)val('SELECT MIN(id) FROM bots');

@@ -6,6 +6,21 @@ function flash(string $msg, string $type = 'ok'): void { $_SESSION['flash'][] = 
 function flashes(): array { $f = $_SESSION['flash'] ?? []; unset($_SESSION['flash']); return $f; }
 function redirect(string $url): never { header('Location: ' . $url); exit; }
 function csrf_field(): string { return '<input type="hidden" name="csrf" value="' . h($_SESSION['csrf'] ?? '') . '">'; }
+/** Проверка права на действие (POST). При отказе — сообщение и возврат на страницу. */
+function need(string $perm): void
+{
+    if (can($perm)) return;
+    flash('Недостаточно прав для этого действия', 'err');
+    redirect('?p=' . urlencode((string)($_GET['p'] ?? '')) . (isset($_GET['id']) ? '&id=' . (int)$_GET['id'] : ''));
+}
+
+function need_scope(int $botId): void
+{
+    if (bot_ok($botId)) return;
+    flash('Этот бот вам не назначен', 'err');
+    redirect('?p=' . urlencode((string)($_GET['p'] ?? '')));
+}
+
 function is_post(): bool { return $_SERVER['REQUEST_METHOD'] === 'POST'; }
 function post(string $k, string $d = ''): string { return trim((string)($_POST[$k] ?? $d)); }
 function post_ids(string $k): array { return array_values(array_unique(array_filter(array_map('intval', (array)($_POST[$k] ?? []))))); }
@@ -21,8 +36,8 @@ function group_options(int $sel = 0, string $empty = '— нет —'): string
 
 function bot_options(int $sel = 0, string $all = 'Все боты'): string
 {
-    $o = $all !== '' ? '<option value="0">' . h($all) . '</option>' : '';
-    foreach (rows('SELECT id, name, username, active FROM bots ORDER BY id') as $b) {
+    $o = ($all !== '' && unrestricted()) ? '<option value="0">' . h($all) . '</option>' : '';
+    foreach (visible_bots() as $b) {
         $o .= '<option value="' . $b['id'] . '"' . ($b['id'] == $sel ? ' selected' : '') . '>' . h($b['name'] . ($b['username'] ? ' (@' . $b['username'] . ')' : '')) . ($b['active'] ? '' : ' [выкл]') . '</option>';
     }
     return $o;

@@ -4,7 +4,11 @@ declare(strict_types=1);
 require __DIR__ . '/../lib/bootstrap.php';
 migrate();
 mt_srand(7);
-set_setting('admin_login', 'admin'); set_setting('admin_hash', password_hash('demo-pass-123', PASSWORD_DEFAULT));
+$roles = array_column(rows('SELECT * FROM admin_roles'), 'id', 'name');
+$mkAdmin = function (string $login, string $name, string $role, int $all, array $botIdx = [], int $active = 1) use (&$roles, &$bots) {
+    $id = insert('admin_users', ['login' => $login, 'name' => $name, 'pass_hash' => password_hash('demo-pass-123', PASSWORD_DEFAULT), 'role_id' => $roles[$role], 'all_bots' => $all, 'active' => $active, 'last_login' => now() - mt_rand(600, 400000), 'created_at' => now() - 20 * 86400]);
+    foreach ($botIdx as $i) q('INSERT INTO admin_user_bots VALUES (?, ?)', [$id, $bots[$i]]);
+};
 set_setting('secret', 'demo'); set_setting('postback_key', 'demo-postback-key'); set_setting('cron_key', 'demo-cron-key');
 set_setting('tz', 'Europe/Moscow'); set_setting('base_url', 'https://bots.example.com/tgbot'); set_setting('last_tick', (string)now());
 set_setting('admin_tg_id', '100500');
@@ -13,6 +17,14 @@ $bots = [];
 foreach ([['Магазин одежды', 'shop_demo_bot'], ['Курсы английского', 'english_demo_bot'], ['Новости канала', 'news_demo_bot']] as $i => [$n, $u])
     $bots[] = insert('bots', ['name' => $n, 'token' => ($i + 1) . ':DEMO' . str_repeat('x', 32), 'username' => $u, 'secret' => rand_token(8), 'active' => $i < 2 ? 1 : 0, 'created_at' => now() - 40 * 86400]);
 
+$mkAdmin('admin', 'Главный администратор', 'Администратор', 1);
+$mkAdmin('olga', 'Ольга Смирнова', 'Менеджер рассылок', 0, [0]);
+$mkAdmin('pavel', 'Павел Орлов', 'Менеджер рассылок', 0, [1, 2]);
+$mkAdmin('irina', 'Ирина Волкова', 'Редактор контента', 0, [0, 1]);
+$mkAdmin('analyst', 'Андрей Аналитик', 'Аналитик', 1);
+$mkAdmin('exintern', 'Бывший стажёр', 'Аналитик', 0, [2], 0);
+foreach (['team.add' => 'olga / Менеджер рассылок', 'team.update' => 'pavel', 'roles.update' => 'Редактор контента', 'broadcast.schedule' => '#2 Новогодняя рассылка (все боты)', 'login' => 'admin'] as $a => $d)
+    insert('audit', ['admin_id' => 1, 'action' => $a, 'detail' => $d, 'ip' => '203.0.113.7', 'at' => now() - mt_rand(100, 80000)]);
 $g = [];
 foreach (['Новые' => '#3b82f6', 'Прогрев' => '#f59e0b', 'Кликнули оффер' => '#8b5cf6', 'Купили' => '#16a34a', 'VIP' => '#dc2626', 'Не купили' => '#6b7280'] as $n => $c)
     $g[$n] = insert('groups', ['name' => $n, 'color' => $c, 'created_at' => now() - 30 * 86400]);

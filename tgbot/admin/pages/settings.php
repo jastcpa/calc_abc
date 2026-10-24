@@ -2,6 +2,7 @@
 $title = 'Настройки';
 if (is_post()) {
     $do = post('do');
+    audit('settings.' . $do);
     if ($do === 'save') {
         $tzs = post('tz', 'UTC');
         if (in_array($tzs, DateTimeZone::listIdentifiers(), true)) set_setting('tz', $tzs); else flash('Неверный часовой пояс', 'err');
@@ -12,10 +13,6 @@ if (is_post()) {
         $bu = rtrim(post('base_url'), '/');
         set_setting('base_url', $bu);
         flash('Сохранено');
-    } elseif ($do === 'password') {
-        if (!password_verify(post('old'), (string)setting('admin_hash'))) flash('Текущий пароль неверен', 'err');
-        elseif (mb_strlen(post('new')) < 8) flash('Новый пароль короче 8 символов', 'err');
-        else { set_setting('admin_hash', password_hash(post('new'), PASSWORD_DEFAULT)); flash('Пароль изменён'); }
     } elseif ($do === 'regen') {
         $k = post('key');
         if (in_array($k, ['postback_key', 'cron_key'], true)) { set_setting($k, rand_token(16)); flash('Ключ обновлён'); }
@@ -44,7 +41,3 @@ if (is_post()) {
 <p>Или по HTTP: <code data-copy><?= h(base_url()) ?>/cron.php?key=<?= h(setting('cron_key')) ?></code></p>
 <form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="regen"><input type="hidden" name="key" value="cron_key"><button class="btn sec sm" data-confirm="Старые ссылки cron перестанут работать. Продолжить?">Сменить ключ cron</button></form></div>
 
-<div class="card"><h2>Пароль администратора</h2>
-<form method="post" class="grid3"><?= csrf_field() ?><input type="hidden" name="do" value="password">
-<div><label>Текущий</label><input type="password" name="old"></div><div><label>Новый</label><input type="password" name="new"></div>
-<div><label>&nbsp;</label><button class="btn">Сменить</button></div></form></div>

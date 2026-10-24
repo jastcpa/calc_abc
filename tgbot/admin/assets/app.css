@@ -58,3 +58,9 @@ code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;ba
 .pager a,.pager span{display:inline-block;padding:3px 10px;border:1px solid var(--line);border-radius:6px;margin-right:4px}.pager span{background:var(--brand);color:#fff}
 .login{max-width:340px;margin:12vh auto}
 .linkbtn{background:none;border:0;color:#cbd5e1;padding:9px 18px;cursor:pointer;font:inherit;width:100%;text-align:left}.linkbtn:hover{background:#ffffff14}
+
+.flash.ro-note{background:#f59e0b22;border-color:#f59e0b66}
+.side .out a{padding:9px 18px;line-height:1.3}.side .out small{color:#94a3b8}
+.perm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}.perm-grid .card{margin:0}
+.dim{opacity:.55}
+button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;cursor:not-allowed}

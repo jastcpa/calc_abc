@@ -122,6 +122,10 @@
     render(); drawBubble(); preview();
   }
 
+  // режим просмотра: блокируем все формы изменения (сервер всё равно проверяет права)
+  if (document.querySelector('meta[name=ro]')?.content === '1') {
+    document.querySelectorAll('main form[method=post]').forEach((f) => f.querySelectorAll('input:not([type=hidden]),select,textarea,button').forEach((el) => { el.disabled = true; }));
+  }
   // подтверждения
   document.addEventListener('click', (e) => {
     const a = e.target.closest('[data-confirm]');
@@ -137,3 +141,4 @@
     el.classList.add('copied'); setTimeout(() => el.classList.remove('copied'), 800);
   }));
 })();
+document.getElementById('allbots')?.addEventListener('change', (e) => document.getElementById('botlist')?.classList.toggle('dim', e.target.checked));

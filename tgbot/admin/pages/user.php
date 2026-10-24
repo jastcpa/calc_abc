@@ -1,10 +1,11 @@
 <?php
 $id = (int)($_GET['id'] ?? 0);
 $u = row('SELECT * FROM users WHERE id = ?', [$id]);
-if (!$u) redirect('?p=users');
+if (!$u || !bot_ok((int)$u['bot_id'])) redirect('?p=users');
 $title = user_name($u);
 if (is_post()) {
     $do = post('do');
+    need($do === 'delete' ? 'users.delete' : 'users.edit');
     if ($do === 'add_group') { group_add($id, (int)post('group_id'), 'manual'); flash('Добавлен в группу'); }
     elseif ($do === 'del_group') { group_remove($id, (int)post('group_id')); flash('Удалён из группы'); }
     elseif ($do === 'delete') {
@@ -27,7 +28,7 @@ $evNames = ['start' => '▶ /start', 'step_sent' => '✉ Шаг цепочки �
 <p>Источник: <b><?= h($u['source'] ?: '—') ?></b> · Метка: <code><?= h($u['label'] ?: '—') ?></code></p>
 <p>Start-параметр: <code><?= h($u['start_param'] ?: '—') ?></code></p>
 <p>Пришёл: <?= fmt_dt((int)$u['created_at']) ?> · Активность: <?= fmt_dt((int)$u['last_seen']) ?></p>
-<form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="delete"><button class="btn sm red" data-confirm="Удалить пользователя и историю?">Удалить пользователя</button></form></div>
+<?php if (can('users.delete')): ?><form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="delete"><button class="btn sm red" data-confirm="Удалить подписчика и историю?">Удалить подписчика</button></form><?php endif; ?></div>
 <div class="card"><h2>Группы</h2>
 <?php foreach ($groups as $g): ?><form method="post" style="display:inline"><?= csrf_field() ?><input type="hidden" name="do" value="del_group"><input type="hidden" name="group_id" value="<?= $g['id'] ?>"><?= group_tag($g) ?><button class="btn sm sec" title="убрать">×</button> </form><?php endforeach; if (!$groups) echo '<p class="muted">Нет групп</p>'; ?>
 <form method="post" class="row" style="margin-top:12px"><?= csrf_field() ?><input type="hidden" name="do" value="add_group"><select name="group_id"><?= group_options(0, '— добавить в группу —') ?></select><button class="btn sm">Добавить</button></form>

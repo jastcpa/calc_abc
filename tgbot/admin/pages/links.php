@@ -1,6 +1,8 @@
 <?php
 $title = 'Ссылки и источники';
-$botId = (int)($_GET['bot'] ?? (int)val('SELECT MIN(id) FROM bots WHERE active = 1'));
+$vis = visible_bots();
+$botId = (int)($_GET['bot'] ?? ($vis[0]['id'] ?? 0));
+if (!bot_ok($botId)) $botId = (int)($vis[0]['id'] ?? 0);
 $botRow = row('SELECT * FROM bots WHERE id = ?', [$botId]);
 $bot = $botRow['username'] ?? '';
 $src = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['source'] ?? ''));

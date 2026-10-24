@@ -44,7 +44,7 @@ function reset_calls(): void { global $CALLS, $RESP; $CALLS = []; $RESP = []; }
 
 function reset_db(): void
 {
-    foreach (['users', 'user_groups', 'groups', 'flows', 'steps', 'user_flows', 'broadcasts', 'bq', 'events', 'in_rules', 'out_hooks', 'out_queue', 'bots', 'login_fail'] as $t) db()->exec("DELETE FROM $t");
+    foreach (['admin_user_bots', 'admin_users', 'admin_roles', 'audit', 'users', 'user_groups', 'groups', 'flows', 'steps', 'user_flows', 'broadcasts', 'bq', 'events', 'in_rules', 'out_hooks', 'out_queue', 'bots', 'login_fail'] as $t) db()->exec("DELETE FROM $t");
     db()->exec("DELETE FROM sqlite_sequence");
     $GLOBALS['TG_TRANSPORT'] && reset_calls();
 }
@@ -312,6 +312,42 @@ eq((int)val('SELECT COUNT(*) FROM users'), 1, 'SQL-инъекция через �
 $bc = insert('broadcasts', ['name' => 'x', 'body' => 'x', 'inc_groups' => json_encode(['1); DROP TABLE users;--']), 'created_at' => now()]);
 ok(bc_count(row('SELECT * FROM broadcasts WHERE id=?', [$bc])) >= 0, 'id групп в рассылке приводятся к int');
 
+
+// ======================================================================
+section('Роли и права (unit)');
+reset_db();
+$adm = seed_roles();
+eq((int)val('SELECT COUNT(*) FROM admin_roles'), 4, 'созданы системная и 3 стартовые роли');
+eq(seed_roles(), $adm, 'seed_roles идемпотентен');
+$b1 = mkbot('A'); $b2 = mkbot('B'); $b3 = mkbot('C');
+$mkAdmin = function (string $login, int $role, int $all, array $bots = []) {
+    $id = insert('admin_users', ['login' => $login, 'name' => $login, 'pass_hash' => 'x', 'role_id' => $role, 'all_bots' => $all, 'active' => 1, 'created_at' => now()]);
+    foreach ($bots as $b) q('INSERT INTO admin_user_bots VALUES (?,?)', [$id, $b]);
+    return auth_load($id);
+};
+$roleMgr = (int)val("SELECT id FROM admin_roles WHERE name='Менеджер рассылок'");
+$roleAn = (int)val("SELECT id FROM admin_roles WHERE name='Аналитик'");
+$A = $mkAdmin('root', $adm, 0);               // админ: all_bots в БД = 0, но права всё равно полные
+$M = $mkAdmin('mgr', $roleMgr, 0, [$b1, $b2]);
+$N = $mkAdmin('an', $roleAn, 1);
+ok(is_admin($A) && can('settings.anything', $A), 'админ: любое право');
+ok(bot_scope($A) === null && unrestricted($A), 'админ: доступ ко всем ботам независимо от флага');
+ok(can('broadcasts.send', $M) && !can('flows.edit', $M) && !can('postbacks.view', $M), 'менеджер: только свои права');
+ok(!can('broadcasts.send', $N) && can('users.export', $N), 'аналитик: просмотр и экспорт, без отправки');
+eq(bot_scope($M), [$b1, $b2], 'менеджер ограничен назначенными ботами');
+ok(bot_scope($N) === null, 'all_bots=1 снимает ограничение');
+ok(bot_ok($b1, $M) && !bot_ok($b3, $M) && !bot_ok(0, $M) && bot_ok(0, $N), 'bot_ok: чужой бот и «все боты» запрещены ограниченному');
+eq(scope_sql('u.bot_id', false, $M), " AND u.bot_id IN ($b1,$b2)", 'scope_sql ограниченного');
+eq(scope_sql('u.bot_id', true, $M), " AND u.bot_id IN ($b1,$b2,0)", 'scope_sql с общими записями');
+eq(scope_sql('u.bot_id', false, $N), '', 'scope_sql без ограничения пуст');
+$E = $mkAdmin('nobots', $roleMgr, 0, []);
+eq(scope_sql('u.bot_id', false, $E), ' AND 0', 'пользователь без ботов не видит ничего');
+eq(count(visible_bots($M)), 2, 'visible_bots учитывает назначение');
+$unknown = json_encode(['users.view', 'hack.everything']);
+q('UPDATE admin_roles SET perms = ? WHERE id = ?', [$unknown, $roleAn]);
+ok(!can('hack.everything', auth_load((int)$N['id'])), 'неизвестные права из БД игнорируются');
+eq(active_admin_count(), 1, 'один активный админ');
+
 // ======================================================================
 section('HTTP: вебхук, постбек, трекер, админка');
 reset_db();
@@ -326,8 +362,8 @@ $GLOBALS['TG_TRANSPORT_BACKUP'] = $GLOBALS['TG_TRANSPORT'];
 set_setting('api_base', "http://127.0.0.1:$mport");
 set_setting('base_url', "http://127.0.0.1:$port");
 set_setting('postback_key', 'PKEY');
-set_setting('admin_login', 'admin');
-set_setting('admin_hash', password_hash('correct horse', PASSWORD_DEFAULT));
+$adminRoleId = seed_roles();
+$adminUid = insert('admin_users', ['login' => 'admin', 'name' => 'Boss', 'pass_hash' => password_hash('correct horse', PASSWORD_DEFAULT), 'role_id' => $adminRoleId, 'all_bots' => 1, 'active' => 1, 'created_at' => now()]);
 $b1 = mkbot('Http'); $b2 = mkbot('Http2');
 $secret = (string)val('SELECT secret FROM bots WHERE id=?', [$b1]);
 $fl = mkflow(0, '', true, [0]);
@@ -402,7 +438,7 @@ eq(http('GET', '/data/')['code'] >= 400 ? 1 : 0, 1, 'каталог data/ нед
 $r = http('GET', '/admin/index.php');
 ok(str_contains($r['body'], 'name="password"'), 'админка: без входа показывается форма логина');
 foreach (['X-Frame-Options: DENY', 'X-Content-Type-Options: nosniff', 'Content-Security-Policy'] as $hd) ok(stripos($r['head'], $hd) !== false, "заголовок безопасности $hd");
-ok(!str_contains(http('GET', '/admin/index.php?p=users')['body'], 'Пользователи ('), 'админка: страницы недоступны без входа');
+ok(!str_contains(http('GET', '/admin/index.php?p=users')['body'], 'Подписчики ('), 'админка: страницы недоступны без входа');
 $r = http('POST', '/admin/index.php', ['body' => 'login=admin&password=wrong']);
 contains($r['body'], 'Неверный логин', 'неверный пароль отклонён');
 for ($i = 0; $i < 5; $i++) http('POST', '/admin/index.php', ['body' => 'login=admin&password=wrong']);
@@ -449,23 +485,25 @@ $r = http('POST', '/admin/index.php?p=logout', ['body' => "csrf=$csrf"]);
 ok($r['code'] === 302, 'выход');
 ok(str_contains(http('GET', '/admin/index.php?p=users')['body'], 'name="password"'), 'после выхода доступ закрыт');
 
+require __DIR__ . '/rbac_http.inc';
+
 proc_terminate($srv); proc_terminate($mock);
 
 // ======================================================================
 section('Миграция со старой однобот. схемы');
 $tmp2 = $tmp . '/legacy'; mkdir($tmp2);
 $legacy = new PDO('sqlite:' . $tmp2 . '/old.sqlite');
-$legacy->exec("CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT); INSERT INTO settings VALUES ('bot_token','5:OLDTOKEN'),('bot_username','oldbot');
+$legacy->exec("CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT); INSERT INTO settings VALUES ('bot_token','5:OLDTOKEN'),('bot_username','oldbot'),('admin_login','olduser'),('admin_hash','HASH');
 CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id INTEGER UNIQUE NOT NULL, username TEXT, first_name TEXT, last_name TEXT, lang TEXT, source TEXT, label TEXT, start_param TEXT, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, last_seen INTEGER, blocked_at INTEGER);
 INSERT INTO users (tg_id, first_name, created_at) VALUES (42, 'Old', 1);
 CREATE TABLE flows (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, group_id INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
 INSERT INTO flows (name, created_at) VALUES ('old flow', 1);");
 $code = '<?php putenv("TGBOT_CONFIG=' . $tmp2 . '/c.php"); file_put_contents("' . $tmp2 . '/c.php", "<?php return [\'db\'=>\'' . $tmp2 . '/old.sqlite\'];"); require "' . __DIR__ . '/../lib/bootstrap.php";
 $b = row("SELECT * FROM bots"); $u = row("SELECT * FROM users"); $f = row("SELECT * FROM flows");
-echo json_encode([$b["token"] ?? null, $u["bot_id"] == ($b["id"] ?? -1), $u["tg_id"], $f["bot_id"] == ($b["id"] ?? -1)]);';
+$a = row("SELECT a.login, r.is_admin, a.all_bots FROM admin_users a JOIN admin_roles r ON r.id = a.role_id"); echo json_encode([$b["token"] ?? null, $u["bot_id"] == ($b["id"] ?? -1), $u["tg_id"], $f["bot_id"] == ($b["id"] ?? -1), $a]);';
 file_put_contents($tmp2 . '/m.php', $code);
 $out = shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($tmp2 . '/m.php') . ' 2>&1');
-eq(json_decode((string)$out, true), ['5:OLDTOKEN', true, 42, true], 'старая установка: токен → бот, пользователи и цепочки привязаны к нему');
+eq(json_decode((string)$out, true), ['5:OLDTOKEN', true, 42, true, ['login' => 'olduser', 'is_admin' => 1, 'all_bots' => 1]], 'старая установка: токен → бот, пользователи/цепочки привязаны к нему, единственный админ → пользователь с ролью «Администратор»');
 
 // ----------------------------------------------------------------------
 echo "\n" . str_repeat('=', 50) . "\nПройдено: {$T['pass']}, провалено: {$T['fail']}\n";

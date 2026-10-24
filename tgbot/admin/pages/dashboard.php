@@ -1,8 +1,12 @@
 <?php
 $title = 'Дашборд';
 $bot = (int)($_GET['bot'] ?? 0);
-$ub = $bot ? ' AND bot_id = ' . $bot : '';            // фильтр по боту для таблицы users
-$eb = $bot ? ' AND user_id IN (SELECT id FROM users WHERE bot_id = ' . $bot . ')' : ''; // для events
+if ($bot && !bot_ok($bot)) $bot = 0;
+// список ботов, по которым считаем: выбранный → иначе доступные пользователю → иначе без ограничения
+$scope = $bot ? [$bot] : bot_scope();
+$bl = $scope === null ? '' : ($scope ? implode(',', array_map('intval', $scope)) : '0');
+$ub = $bl !== '' ? " AND bot_id IN ($bl)" : '';                                            // для таблицы users
+$eb = $bl !== '' ? " AND user_id IN (SELECT id FROM users WHERE bot_id IN ($bl))" : '';   // для events
 $days = (int)($_GET['days'] ?? 30);
 if (!in_array($days, [7, 14, 30, 90], true)) $days = 30;
 $off = tz()->getOffset(new DateTime());
@@ -39,44 +43,44 @@ $sources = rows("SELECT COALESCE(NULLIF(u.source,''),'(без источника
   SUM(EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.type='click')) clicked,
   SUM(EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.type='postback')) converted,
   SUM(EXISTS (SELECT 1 FROM user_groups g WHERE g.user_id = u.id)) grouped
-  FROM users u WHERE u.created_at >= ?" . ($bot ? ' AND u.bot_id = ' . $bot : '') . " GROUP BY 1 ORDER BY users DESC LIMIT 30", [$since]);
-$grp = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug' . ($bot ? ' JOIN users uu ON uu.id = ug.user_id AND uu.bot_id = ' . $bot : '') . ' WHERE ug.group_id = g.id) cnt FROM groups g ORDER BY cnt DESC');
+  FROM users u WHERE u.created_at >= ?" . ($bl !== '' ? " AND u.bot_id IN ($bl)" : '') . " GROUP BY 1 ORDER BY users DESC LIMIT 30", [$since]);
+$grp = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug' . ($bl !== '' ? " JOIN users uu ON uu.id = ug.user_id AND uu.bot_id IN ($bl)" : '') . ' WHERE ug.group_id = g.id) cnt FROM groups g ORDER BY cnt DESC');
 $gmax = max(1, ...array_column($grp ?: [['cnt' => 1]], 'cnt'));
 
 $sentBy = array_column(rows("SELECT ref, COUNT(DISTINCT user_id) c FROM events WHERE type IN ('step_sent','bc_sent')$eb GROUP BY ref"), 'c', 'ref');
 $buttons = rows("SELECT ref, label, COUNT(*) c, COUNT(DISTINCT user_id) u FROM events WHERE type='click' AND created_at >= ?$eb GROUP BY ref, label ORDER BY c DESC LIMIT 30", [$since]);
 
-$flows = rows('SELECT * FROM flows' . ($bot ? ' WHERE bot_id IN (0, ' . $bot . ')' : '') . ' ORDER BY id');
+$flows = rows('SELECT * FROM flows' . ($bl !== '' ? " WHERE bot_id IN (0, $bl)" : '') . ' ORDER BY id');
 $funnel = [];
 foreach ($flows as $f) {
-    $entered = (int)val('SELECT COUNT(*) FROM user_flows WHERE flow_id = ?' . ($bot ? ' AND user_id IN (SELECT id FROM users WHERE bot_id = ' . $bot . ')' : ''), [$f['id']]);
+    $entered = (int)val('SELECT COUNT(*) FROM user_flows WHERE flow_id = ?' . $eb, [$f['id']]);
     $steps = rows('SELECT id, position, delay FROM steps WHERE flow_id = ? ORDER BY position', [$f['id']]);
     foreach ($steps as &$s) {
         $s['sent'] = (int)($sentBy['s' . $s['id']] ?? 0);
-        $s['clicks'] = (int)val("SELECT COUNT(DISTINCT user_id) FROM events WHERE type='click' AND ref LIKE ?", ['s' . $s['id'] . ':%']);
+        $s['clicks'] = (int)val("SELECT COUNT(DISTINCT user_id) FROM events WHERE type='click' AND ref LIKE ?$eb", ['s' . $s['id'] . ':%']);
     }
     $funnel[] = [$f, $entered, $steps];
 }
-$bcs = rows('SELECT * FROM broadcasts WHERE status IN (\'sending\',\'done\',\'cancelled\')' . ($bot ? ' AND bot_id IN (0, ' . $bot . ')' : '') . ' ORDER BY id DESC LIMIT 8');
-$feed = rows('SELECT e.*, u.first_name, u.last_name, u.username, u.tg_id, u.id uid FROM events e LEFT JOIN users u ON u.id = e.user_id' . ($bot ? ' WHERE u.bot_id = ' . $bot : '') . ' ORDER BY e.id DESC LIMIT 20');
+$bcs = rows('SELECT * FROM broadcasts WHERE status IN (\'sending\',\'done\',\'cancelled\')' . ($bl === '' ? '' : (unrestricted() ? " AND bot_id IN (0, $bl)" : " AND bot_id IN ($bl)")) . ' ORDER BY id DESC LIMIT 8');
+$feed = rows('SELECT e.*, u.first_name, u.last_name, u.username, u.tg_id, u.id uid FROM events e LEFT JOIN users u ON u.id = e.user_id' . ($bl !== '' ? " WHERE u.bot_id IN ($bl)" : '') . ' ORDER BY e.id DESC LIMIT 20');
 $evNames = ['start' => '▶ /start', 'step_sent' => '✉ шаг', 'click' => '👆 клик', 'bc_sent' => '📣 рассылка', 'group_add' => '➕ группа', 'group_remove' => '➖ группа', 'postback' => '🔁 постбек', 'message' => '💬 сообщение', 'blocked' => '🚫 блок', 'unblocked' => '✅ разблок', 'flow_start' => '🔗 цепочка', 'flow_done' => '🏁 цепочка готова', 'send_error' => '⚠ ошибка'];
 $pct = fn($a, $b) => $b > 0 ? round($a / $b * 100) . '%' : '—';
 ?>
 <div class="row"><h1 style="margin:0">Дашборд</h1><span class="sp"></span>
 <form method="get"><input type="hidden" name="p" value="dashboard"><input type="hidden" name="days" value="<?= $days ?>"><select name="bot" onchange="this.form.submit()" style="width:auto"><?= bot_options($bot, 'Все боты') ?></select><noscript><button class="btn sm">OK</button></noscript></form>
 <?php foreach ([7, 14, 30, 90] as $d) echo '<a class="btn sm ' . ($d === $days ? '' : 'sec') . '" href="?p=dashboard&bot=' . $bot . '&days=' . $d . '">' . $d . ' дн.</a>'; ?></div>
-<?php if (!val('SELECT COUNT(*) FROM bots')): ?><div class="flash err" style="margin-top:14px">Нет ни одного бота — <a href="?p=bots">подключите бота</a>.</div><?php endif; ?>
+<?php if (!count(visible_bots())): ?><div class="flash err" style="margin-top:14px"><?= is_admin() ? 'Нет ни одного бота — <a href="?p=bots">подключите бота</a>.' : 'Вам не назначено ни одного бота — обратитесь к администратору.' ?></div><?php endif; ?>
 <?php if (now() - (int)setting('last_tick', '0') > 300): ?><div class="flash err" style="margin-top:14px">Планировщик не запускался более 5 минут: задержки в цепочках и рассылки по расписанию не будут работать. Настройте cron (см. <a href="?p=settings">Настройки</a>).</div><?php endif; ?>
 <div class="cards" style="margin-top:14px"><?php foreach ($kpi as [$l, $v]) echo '<div class="kpi"><b>' . number_format($v, 0, '', ' ') . '</b><span>' . h($l) . '</span></div>'; ?></div>
 
 <div class="grid2"><div class="card"><h2>Новые пользователи</h2><?= spark($newSeries) ?></div>
 <div class="card"><h2>Клики по кнопкам</h2><?= spark($clickSeries) ?></div></div>
 
-<?php if (!$bot && (int)val('SELECT COUNT(*) FROM bots') > 1): ?>
+<?php if (!$bot && count(visible_bots()) > 1): ?>
 <div class="card"><h2>Боты</h2><table><tr><th>Бот</th><th>Пользователей</th><th>Новых за период</th><th>Заблокировали</th><th>Клики за период</th></tr>
 <?php foreach (rows('SELECT b.*, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id) users, (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id AND u.created_at >= ?) fresh,
   (SELECT COUNT(*) FROM users u WHERE u.bot_id = b.id AND u.status = \'blocked\') blocked,
-  (SELECT COUNT(*) FROM events e JOIN users u ON u.id = e.user_id WHERE u.bot_id = b.id AND e.type = \'click\' AND e.created_at >= ?) clicks FROM bots b ORDER BY b.id', [$since, $since]) as $bb): ?>
+  (SELECT COUNT(*) FROM events e JOIN users u ON u.id = e.user_id WHERE u.bot_id = b.id AND e.type = \'click\' AND e.created_at >= ?) clicks FROM bots b WHERE 1=1' . scope_sql('b.id') . ' ORDER BY b.id', [$since, $since]) as $bb): ?>
 <tr><td><a href="?p=dashboard&bot=<?= $bb['id'] ?>&days=<?= $days ?>"><?= h(bot_label((int)$bb['id'])) ?></a></td><td><?= $bb['users'] ?></td><td><?= $bb['fresh'] ?></td><td><?= $bb['blocked'] ?></td><td><?= $bb['clicks'] ?></td></tr><?php endforeach; ?></table></div>
 <?php endif; ?>
 <div class="card"><h2>Источники <span class="muted">(пришли за период)</span></h2><table><tr><th>Источник</th><th>Польз.</th><th>Кликнули</th><th>Внешнее событие</th><th>В группах</th><th>Заблок.</th></tr>
@@ -97,7 +101,7 @@ $pct = fn($a, $b) => $b > 0 ? round($a / $b * 100) . '%' : '—';
 <?php endforeach; if (!$buttons) echo '<tr><td colspan="5" class="muted">Кликов пока нет</td></tr>'; ?></table></div>
 
 <?php if ($bcs): ?><div class="card"><h2>Последние рассылки</h2><table><tr><th>Рассылка</th><th>Время</th><th>Доставлено</th><th>Ошибок</th><th>Кликнули</th></tr>
-<?php foreach ($bcs as $b): $cl = (int)val("SELECT COUNT(DISTINCT user_id) FROM events WHERE type='click' AND ref LIKE ?", ['b' . $b['id'] . ':%']); ?><tr><td><a href="?p=broadcast&id=<?= $b['id'] ?>"><?= h($b['name']) ?></a></td><td><?= fmt_dt((int)$b['started_at']) ?></td>
+<?php foreach ($bcs as $b): $cl = (int)val("SELECT COUNT(DISTINCT user_id) FROM events WHERE type='click' AND ref LIKE ?$eb", ['b' . $b['id'] . ':%']); ?><tr><td><a href="?p=broadcast&id=<?= $b['id'] ?>"><?= h($b['name']) ?></a></td><td><?= fmt_dt((int)$b['started_at']) ?></td>
 <td><?= $b['sent'] ?> / <?= $b['total'] ?></td><td><?= $b['failed'] ?></td><td><?= $cl ?> <span class="muted"><?= $pct($cl, (int)$b['sent']) ?></span></td></tr><?php endforeach; ?></table></div><?php endif; ?>
 
 <div class="card"><h2>Лента событий</h2><table>

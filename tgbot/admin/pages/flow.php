@@ -1,7 +1,7 @@
 <?php
 $fid = (int)($_GET['id'] ?? 0);
 $flow = row('SELECT * FROM flows WHERE id = ?', [$fid]);
-if (!$flow) redirect('?p=flows');
+if (!$flow || !bot_ok((int)$flow['bot_id'])) redirect('?p=flows');
 $title = $flow['name'];
 $units = ['s' => [1, 'сек'], 'm' => [60, 'мин'], 'h' => [3600, 'час'], 'd' => [86400, 'дн']];
 
@@ -13,9 +13,11 @@ function split_delay(int $sec): array
 
 if (is_post()) {
     $do = post('do');
+    need('flows.edit');
     if ($do === 'save_flow') {
         $isDef = isset($_POST['is_default']) ? 1 : 0;
         $bot = (int)post('bot_id');
+        need_scope($bot);
         if ($isDef) q('UPDATE flows SET is_default = 0 WHERE bot_id = ?', [$bot]);
         update('flows', $fid, ['bot_id' => $bot, 'name' => mb_substr(post('name'), 0, 80) ?: 'Цепочка', 'source' => mb_substr(post('source'), 0, 64),
             'is_default' => $isDef, 'active' => isset($_POST['active']) ? 1 : 0, 'group_id' => (int)post('group_id')]);

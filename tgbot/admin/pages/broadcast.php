@@ -1,13 +1,17 @@
 <?php
 $bid = (int)($_GET['id'] ?? 0);
 $b = row('SELECT * FROM broadcasts WHERE id = ?', [$bid]);
-if (!$b) redirect('?p=broadcasts');
+if (!$b || !bot_ok((int)$b['bot_id'])) redirect('?p=broadcasts');
 $title = $b['name'];
 $editable = in_array($b['status'], ['draft', 'scheduled'], true);
 
 if (is_post()) {
     $do = post('do');
+    need(in_array($do, ['tick', 'cancel'], true) ? 'broadcasts.send' : 'broadcasts.edit');
     if (in_array($do, ['save', 'test'], true) && $editable) {
+        need_scope((int)post('bot_id'));
+        // без права отправки нельзя планировать/запускать и менять уже запланированную рассылку
+        if ($do === 'save' && (post('mode', 'draft') !== 'draft' || $b['status'] === 'scheduled')) need('broadcasts.send');
         $data = [
             'bot_id' => (int)post('bot_id'), 'name' => mb_substr(post('name'), 0, 80) ?: 'Рассылка', 'body' => mb_substr((string)($_POST['body'] ?? ''), 0, 4096), 'image' => clean_image(post('image')),
             'buttons' => sanitize_buttons(json_decode(post('buttons', '[]'), true)),
@@ -33,6 +37,7 @@ if (is_post()) {
                 $data += ['status' => 'draft', 'send_at' => $at];
             }
             update('broadcasts', $bid, $data);
+            if ($mode !== 'draft') audit('broadcast.' . $mode, '#' . $bid . ' ' . $data['name']);
             if ($mode === 'now') {
                 bc_start($bid);
                 run_tick(20);
@@ -59,7 +64,7 @@ if (is_post()) {
     redirect('?p=broadcast&id=' . $bid);
 }
 $inc = array_map('intval', json_arr($b['inc_groups'])); $exc = array_map('intval', json_arr($b['exc_groups']));
-$groups = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id) cnt FROM groups g ORDER BY name');
+$groups = rows('SELECT g.*, (SELECT COUNT(*) FROM user_groups ug JOIN users uu ON uu.id = ug.user_id WHERE ug.group_id = g.id' . scope_sql('uu.bot_id') . ((int)$b['bot_id'] ? ' AND uu.bot_id = ' . (int)$b['bot_id'] : '') . ') cnt FROM groups g ORDER BY name');
 $recipients = bc_count($b);
 $sl = ['draft' => 'черновик', 'scheduled' => 'запланирована', 'sending' => 'отправляется', 'done' => 'завершена', 'cancelled' => 'отменена'];
 ?>

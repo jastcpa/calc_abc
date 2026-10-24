@@ -3,6 +3,7 @@ $title = 'Боты';
 if (is_post()) {
     $do = post('do');
     $id = (int)post('id');
+    audit('bots.' . $do, '#' . $id);
     $bot = $id ? row('SELECT * FROM bots WHERE id = ?', [$id]) : null;
     if ($do === 'add') {
         $tok = post('token');

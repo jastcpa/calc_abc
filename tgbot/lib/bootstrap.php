@@ -4,6 +4,7 @@ ini_set('display_errors', '0');
 require_once __DIR__ . '/core.php';
 require_once __DIR__ . '/telegram.php';
 require_once __DIR__ . '/engine.php';
+require_once __DIR__ . '/auth.php';
 
 if (is_installed()) migrate();
 

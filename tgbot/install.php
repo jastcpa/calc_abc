@@ -4,6 +4,7 @@ declare(strict_types=1);
 require __DIR__ . '/lib/core.php';
 require __DIR__ . '/lib/telegram.php';
 require __DIR__ . '/lib/engine.php';
+require __DIR__ . '/lib/auth.php';
 
 $errors = [];
 $done = null;
@@ -43,8 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $reqOk) {
             $errors[] = 'Не удалось записать config.php';
         } else {
             migrate();
-            set_setting('admin_login', $login);
-            set_setting('admin_hash', password_hash($pass, PASSWORD_DEFAULT));
+            insert('admin_users', ['login' => $login, 'name' => 'Администратор', 'pass_hash' => password_hash($pass, PASSWORD_DEFAULT),
+                'role_id' => seed_roles(), 'all_bots' => 1, 'active' => 1, 'created_at' => now()]);
             set_setting('secret', rand_token(24));
                         set_setting('postback_key', rand_token(16));
             set_setting('cron_key', rand_token(16));

@@ -3,6 +3,7 @@ $title = 'Постбеки';
 $types = ['start' => '/start (вход пользователя)', 'click' => 'Клик по кнопке', 'group_add' => 'Добавление в группу', 'postback' => 'Входящий постбек', 'flow_done' => 'Цепочка завершена', 'blocked' => 'Заблокировал бота', 'bc_sent' => 'Получил рассылку', 'step_sent' => 'Получил шаг цепочки'];
 if (is_post()) {
     $do = post('do');
+    need('postbacks.edit');
     if ($do === 'rule_add') {
         $ev = mb_substr(post('event'), 0, 100); $gid = (int)post('group_id');
         if ($ev === '' || !$gid) flash('Укажите событие и группу', 'err');

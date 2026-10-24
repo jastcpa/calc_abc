@@ -2,15 +2,19 @@
 $title = 'Цепочки';
 if (is_post()) {
     $do = post('do');
+    need('flows.edit');
     if ($do === 'add') {
         $name = mb_substr(post('name'), 0, 80) ?: 'Новая цепочка';
         $bot = (int)post('bot_id');
+        need_scope($bot);
         $hasDefault = (int)val('SELECT COUNT(*) FROM flows WHERE is_default = 1 AND bot_id = ?', [$bot]);
         $id = insert('flows', ['bot_id' => $bot, 'name' => $name, 'source' => mb_substr(post('source'), 0, 64), 'is_default' => $hasDefault ? 0 : 1, 'active' => 1, 'group_id' => 0, 'created_at' => now()]);
         insert('steps', ['flow_id' => $id, 'position' => 0, 'delay' => 0, 'body' => 'Привет, {first_name}!']);
         redirect('?p=flow&id=' . $id);
     } elseif ($do === 'delete') {
         $id = (int)post('id');
+        $fl = row('SELECT bot_id FROM flows WHERE id = ?', [$id]);
+        if (!$fl || !bot_ok((int)$fl['bot_id'])) { flash('Нет доступа к этой цепочке', 'err'); redirect('?p=flows'); }
         q('DELETE FROM steps WHERE flow_id = ?', [$id]); q('DELETE FROM user_flows WHERE flow_id = ?', [$id]); q('DELETE FROM flows WHERE id = ?', [$id]);
         flash('Цепочка удалена');
     }
@@ -19,7 +23,7 @@ if (is_post()) {
 $list = rows('SELECT f.*, (SELECT COUNT(*) FROM steps s WHERE s.flow_id = f.id) steps,
   (SELECT COUNT(*) FROM user_flows uf WHERE uf.flow_id = f.id) enrolled,
   (SELECT COUNT(*) FROM user_flows uf WHERE uf.flow_id = f.id AND uf.status = \'done\') done,
-  (SELECT COUNT(*) FROM user_flows uf WHERE uf.flow_id = f.id AND uf.status = \'active\') act FROM flows f ORDER BY f.id');
+  (SELECT COUNT(*) FROM user_flows uf WHERE uf.flow_id = f.id AND uf.status = \'active\') act FROM flows f WHERE 1=1' . scope_sql('f.bot_id') . ' ORDER BY f.id');
 ?>
 <h1>Цепочки сообщений</h1>
 <div class="card"><p class="muted">Цепочка — последовательность сообщений: каждое отправляется через заданное время после предыдущего (первое — после входа пользователя). Цепочка выбирается для пользователя по его боту и источнику (параметр <code>?start=источник</code>): сначала цепочка этого бота с подходящим источником, затем общая («для всех ботов»), иначе — цепочка «по умолчанию» бота, затем общая по умолчанию.</p>

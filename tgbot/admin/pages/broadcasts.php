@@ -2,12 +2,13 @@
 $title = 'Рассылки';
 if (is_post()) {
     if (post('do') === 'add') {
+        need('broadcasts.edit'); need_scope((int)post('bot_id'));
         $id = insert('broadcasts', ['bot_id' => (int)post('bot_id'), 'name' => mb_substr(post('name'), 0, 80) ?: 'Новая рассылка', 'body' => 'Текст рассылки', 'created_at' => now()]);
         redirect('?p=broadcast&id=' . $id);
     }
     redirect('?p=broadcasts');
 }
-$list = rows('SELECT * FROM broadcasts ORDER BY id DESC');
+$list = rows('SELECT * FROM broadcasts WHERE 1=1' . scope_sql('bot_id') . ' ORDER BY id DESC');
 $names = ['draft' => ['черновик', ''], 'scheduled' => ['запланирована', 'y'], 'sending' => ['отправляется', 'y'], 'done' => ['завершена', 'g'], 'cancelled' => ['отменена', 'r']];
 $grp = array_column(rows('SELECT id, name FROM groups'), 'name', 'id');
 ?>
